@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash \"/Users/admin/Documents/WORK/ai/agentic-core/scripts/preflight.sh\")"
+    ]
+  }
+}
