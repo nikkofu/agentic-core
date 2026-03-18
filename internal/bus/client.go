@@ -19,6 +19,11 @@ type EventBus interface {
 	Subscribe(ctx context.Context, topic string) (<-chan Message, error)
 }
 
+type PubSub interface {
+	Publish(ctx context.Context, topic string, msg Message) error
+	Consume(ctx context.Context, topic string) (<-chan Message, error)
+}
+
 type HeartbeatBus interface {
 	PublishHeartbeat(ctx context.Context, agentID string, status string) error
 }
@@ -127,6 +132,10 @@ func (f *FakeTransport) Subscribe(ctx context.Context, topic string) (<-chan Mes
 	}()
 
 	return ch, nil
+}
+
+func (f *FakeTransport) Consume(ctx context.Context, topic string) (<-chan Message, error) {
+	return f.Subscribe(ctx, topic)
 }
 
 func (f *FakeTransport) SubscriberCount() int {
