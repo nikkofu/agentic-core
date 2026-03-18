@@ -174,7 +174,7 @@ git commit -m "feat(llm): support static model alias routing"
 - Create: `internal/llm/schema_parser_test.go`
 - Modify: `internal/llm/contracts.go`
 
-- [ ] **Step 1: Write failing parser tests**
+- [x] **Step 1: Write failing parser tests**
 
 ```go
 func TestParseModelOutputFinalOnly(t *testing.T) {}
@@ -182,23 +182,23 @@ func TestParseModelOutputToolCall(t *testing.T) {}
 func TestParseModelOutputRejectsInvalidJSON(t *testing.T) {}
 ```
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 Run: `go test ./internal/llm -run 'TestParseModelOutput' -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement strict parser**
+- [x] **Step 3: Implement strict parser**
 
 ```go
 func ParseModelOutput(raw string) (ActionEnvelope, error)
 ```
 
-- [ ] **Step 4: Re-run tests**
+- [x] **Step 4: Re-run tests**
 
 Run: `go test ./internal/llm -run 'TestParseModelOutput' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/llm/schema_parser.go internal/llm/schema_parser_test.go internal/llm/contracts.go

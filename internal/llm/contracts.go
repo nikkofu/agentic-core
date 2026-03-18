@@ -28,11 +28,18 @@ type InferenceRequest struct {
 	OnApprovalReject string            `json:"on_approval_reject"` // continue | fail
 }
 
+// ActionEnvelope 定义了模型输出的确定性包装
+type ActionEnvelope struct {
+	Think     string          `json:"think"`               // 思考过程
+	CallSkill *ToolCall       `json:"call_skill,omitempty"` // 调用 Skill
+	Final     string          `json:"final,omitempty"`      // 最终回复
+}
+
 // ToolCall 结构定义
 type ToolCall struct {
 	ID               string          `json:"id"`
-	Type             string          `json:"type"` // 必须为 function
-	Function         FunctionCall    `json:"function"`
+	Name             string          `json:"name"`
+	Arguments        json.RawMessage `json:"arguments"`
 	IsWriteOperation bool            `json:"is_write_operation"`
 }
 
