@@ -1,0 +1,10 @@
+<xml>
+<ToUserName><![CDATA[__CORP_ID__]]></ToUserName>
+<FromUserName><![CDATA[__FROM_USER__]]></FromUserName>
+<CreateTime>__CREATE_TIME__</CreateTime>
+<MsgType><![CDATA[image]]></MsgType>
+<PicUrl><![CDATA[__PIC_URL__]]></PicUrl>
+<MediaId><![CDATA[__MEDIA_ID__]]></MediaId>
+<MsgId>__MSG_ID__</MsgId>
+<AgentID>__AGENT_ID__</AgentID>
+</xml>

@@ -3,59 +3,161 @@ package bus
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 )
 
 var ErrNoMessage = errors.New("no message")
 
-type PubSub interface {
-	Publish(ctx context.Context, channel string, msg Message) error
-	Consume(ctx context.Context, channel string) (Message, error)
+type TaskQueue interface {
+	Enqueue(ctx context.Context, queue string, msg Message) error
+	Dequeue(ctx context.Context, queue string) (<-chan Message, error)
+}
+
+type EventBus interface {
+	Publish(ctx context.Context, topic string, msg Message) error
+	Subscribe(ctx context.Context, topic string) (<-chan Message, error)
 }
 
 type HeartbeatBus interface {
 	PublishHeartbeat(ctx context.Context, agentID string, status string) error
 }
 
-type FakePubSub struct {
-	mu       sync.Mutex
-	channels map[string][]Message
+type FakeTransport struct {
+	queueMu sync.Mutex
+	queues  map[string]chan Message
+
+	eventMu     sync.Mutex
+	subscribers map[int]fakeSubscriber
+	nextSubID   int
 }
 
-func NewFakePubSub() *FakePubSub {
-	return &FakePubSub{channels: make(map[string][]Message)}
+type fakeSubscriber struct {
+	pattern string
+	ch      chan Message
 }
 
-func (f *FakePubSub) Publish(ctx context.Context, channel string, msg Message) error {
+func NewFakeTransport() *FakeTransport {
+	return &FakeTransport{
+		queues:      make(map[string]chan Message),
+		subscribers: make(map[int]fakeSubscriber),
+	}
+}
+
+func (f *FakeTransport) Enqueue(ctx context.Context, queue string, msg Message) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := msg.Validate(); err != nil {
 		return err
 	}
-	f.mu.Lock()
-	f.channels[channel] = append(f.channels[channel], msg)
-	f.mu.Unlock()
+
+	ch := f.getQueue(queue)
+	select {
+	case ch <- msg:
+	default:
+	}
 	return nil
 }
 
-func (f *FakePubSub) Consume(ctx context.Context, channel string) (Message, error) {
+func (f *FakeTransport) Dequeue(ctx context.Context, queue string) (<-chan Message, error) {
+	source := f.getQueue(queue)
+	out := make(chan Message, 100)
+
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-source:
+				select {
+				case out <- msg:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return out, nil
+}
+
+func (f *FakeTransport) Publish(ctx context.Context, topic string, msg Message) error {
 	if err := ctx.Err(); err != nil {
-		return Message{}, err
+		return err
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	queue := f.channels[channel]
-	if len(queue) == 0 {
-		return Message{}, ErrNoMessage
+	if err := msg.Validate(); err != nil {
+		return err
 	}
-	msg := queue[0]
-	f.channels[channel] = queue[1:]
-	return msg, nil
+
+	f.eventMu.Lock()
+	defer f.eventMu.Unlock()
+
+	for _, sub := range f.subscribers {
+		if !matchTopic(sub.pattern, topic) {
+			continue
+		}
+		select {
+		case sub.ch <- msg:
+		default:
+		}
+	}
+
+	return nil
+}
+
+func (f *FakeTransport) Subscribe(ctx context.Context, topic string) (<-chan Message, error) {
+	ch := make(chan Message, 100)
+
+	f.eventMu.Lock()
+	id := f.nextSubID
+	f.nextSubID++
+	f.subscribers[id] = fakeSubscriber{pattern: topic, ch: ch}
+	f.eventMu.Unlock()
+
+	go func() {
+		<-ctx.Done()
+		f.eventMu.Lock()
+		defer f.eventMu.Unlock()
+		if sub, ok := f.subscribers[id]; ok {
+			delete(f.subscribers, id)
+			close(sub.ch)
+		}
+	}()
+
+	return ch, nil
+}
+
+func (f *FakeTransport) SubscriberCount() int {
+	f.eventMu.Lock()
+	defer f.eventMu.Unlock()
+	return len(f.subscribers)
+}
+
+func (f *FakeTransport) getQueue(queue string) chan Message {
+	f.queueMu.Lock()
+	defer f.queueMu.Unlock()
+
+	ch, ok := f.queues[queue]
+	if !ok {
+		ch = make(chan Message, 100)
+		f.queues[queue] = ch
+	}
+
+	return ch
+}
+
+func matchTopic(pattern string, topic string) bool {
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(topic, prefix)
+	}
+	return pattern == topic
 }
 
 type FakeHeartbeatBus struct {
-	mu      sync.RWMutex
+	mu       sync.RWMutex
 	statuses map[string]string
 }
 

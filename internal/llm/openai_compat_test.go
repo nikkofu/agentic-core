@@ -1,6 +1,8 @@
 package llm
 
 import (
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -46,6 +48,29 @@ func TestValidateChatCompletionRequest(t *testing.T) {
 			wantErr: true,
 			errType: "invalid_request_error",
 		},
+		{
+			name:    "valid tools with object tool_choice",
+			input:   `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
+			wantErr: false,
+		},
+		{
+			name:    "rejects non-function tool",
+			input:   `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}],"tools":[{"type":"code_interpreter","function":{"name":"lookup"}}]}`,
+			wantErr: true,
+			errType: "invalid_request_error",
+		},
+		{
+			name:    "rejects invalid tool_choice string",
+			input:   `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}],"tool_choice":"sometimes"}`,
+			wantErr: true,
+			errType: "invalid_request_error",
+		},
+		{
+			name:    "rejects tool_choice function not found in tools",
+			input:   `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","function":{"name":"missing"}}}`,
+			wantErr: true,
+			errType: "invalid_request_error",
+		},
 	}
 
 	for _, tt := range tests {
@@ -54,10 +79,16 @@ func TestValidateChatCompletionRequest(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateChatCompletionRequest() error = %v, wantErr %v", err, tt.wantErr)
 			}
+			if tt.wantErr && err != nil && tt.errType != "" && !strings.Contains(err.Error(), tt.errType) {
+				t.Errorf("expected error type %q, got %v", tt.errType, err)
+			}
 		})
 	}
 }
 
 func TestMapProviderError(t *testing.T) {
-	// 暂不测试具体映射，等待实现后补充逻辑
+	status, typ, _ := MapProviderError(errors.New("invalid_request_error: bad model"))
+	if status != 400 || typ != "invalid_request_error" {
+		t.Fatalf("expected 400 invalid_request_error, got %d %s", status, typ)
+	}
 }

@@ -3,80 +3,119 @@ package bus
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-type RedisPubSub struct {
+type RedisTransport struct {
 	client *redis.Client
 }
 
-func NewRedisPubSub(client *redis.Client) *RedisPubSub {
-	return &RedisPubSub{client: client}
+func NewRedisTransport(client *redis.Client) *RedisTransport {
+	return &RedisTransport{client: client}
 }
 
-func (r *RedisPubSub) Publish(ctx context.Context, channel string, msg Message) error {
+func (r *RedisTransport) Enqueue(ctx context.Context, queue string, msg Message) error {
 	if err := msg.Validate(); err != nil {
 		return err
 	}
+
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	// 这里我们同时支持 PUBLISH (广播) 和 LPUSH (队列)
-	// 鉴于目前 Consume 的实现，我们优先使用 LPUSH 来支持队列任务
-	return r.client.LPush(ctx, channel, data).Err()
+
+	return r.client.LPush(ctx, queue, data).Err()
 }
 
-func (r *RedisPubSub) Consume(ctx context.Context, channel string) (Message, error) {
-	// 使用 BRPop 进行阻塞式消费，超时时间稍长一点
-	res, err := r.client.BRPop(ctx, 5*time.Second, channel).Result()
-	if err != nil {
-		if err == redis.Nil {
-			return Message{}, ErrNoMessage
+func (r *RedisTransport) Dequeue(ctx context.Context, queue string) (<-chan Message, error) {
+	ch := make(chan Message, 100)
+
+	go func() {
+		defer close(ch)
+		for {
+			if err := ctx.Err(); err != nil {
+				return
+			}
+
+			values, err := r.client.BRPop(ctx, time.Second, queue).Result()
+			if err != nil {
+				if errors.Is(err, redis.Nil) {
+					continue
+				}
+				if ctx.Err() != nil {
+					return
+				}
+				continue
+			}
+
+			if len(values) != 2 {
+				continue
+			}
+
+			msg, err := ParseMessage([]byte(values[1]))
+			if err != nil {
+				continue
+			}
+
+			select {
+			case ch <- msg:
+			case <-ctx.Done():
+				return
+			}
 		}
-		return Message{}, err
-	}
+	}()
 
-	// BRPop 返回的是 [key, value]
-	if len(res) < 2 {
-		return Message{}, fmt.Errorf("unexpected brpop response length: %d", len(res))
-	}
-
-	return ParseMessage([]byte(res[1]))
+	return ch, nil
 }
 
-// Subscribe 额外提供一个基于 Redis PubSub 的广播模式支持
-func (r *RedisPubSub) Subscribe(ctx context.Context, channel string) <-chan Message {
-	pubsub := r.client.Subscribe(ctx, channel)
-	ch := make(chan Message)
+func (r *RedisTransport) Publish(ctx context.Context, topic string, msg Message) error {
+	if err := msg.Validate(); err != nil {
+		return err
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	return r.client.Publish(ctx, topic, data).Err()
+}
+
+func (r *RedisTransport) Subscribe(ctx context.Context, topic string) (<-chan Message, error) {
+	var pubsub *redis.PubSub
+	if strings.Contains(topic, "*") {
+		pubsub = r.client.PSubscribe(ctx, topic)
+	} else {
+		pubsub = r.client.Subscribe(ctx, topic)
+	}
+
+	ch := make(chan Message, 100)
 	go func() {
 		defer close(ch)
 		defer pubsub.Close()
+
 		for {
 			msg, err := pubsub.ReceiveMessage(ctx)
 			if err != nil {
 				return
 			}
+
 			parsed, err := ParseMessage([]byte(msg.Payload))
-			if err == nil {
-				ch <- parsed
+			if err != nil {
+				continue
+			}
+
+			select {
+			case ch <- parsed:
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
-	return ch
-}
 
-// Broadcast 额外提供一个真正的广播发布
-func (r *RedisPubSub) Broadcast(ctx context.Context, channel string, msg Message) error {
-	if err := msg.Validate(); err != nil {
-		return err
-	}
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	return r.client.Publish(ctx, channel, data).Err()
+	return ch, nil
 }
