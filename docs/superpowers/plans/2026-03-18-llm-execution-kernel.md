@@ -311,30 +311,30 @@ git commit -m "feat(gateway): add openai-compatible chat completions endpoint"
 - Modify: `internal/skill/skill.go`
 - Modify: `internal/skill/builtin.go`
 
-- [ ] **Step 1: Write failing builtin executor tests**
+- [x] **Step 1: Write failing builtin executor tests**
 
 ```go
 func TestExecutorRunsBuiltinTool(t *testing.T) {}
 func TestExecutorReturnsErrorForUnknownTool(t *testing.T) {}
 ```
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 Run: `go test ./internal/skill -run 'TestExecutor' -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement builtin executor path**
+- [x] **Step 3: Implement builtin executor path**
 
 ```go
 func (e *Executor) Execute(ctx context.Context, call llm.ToolCall) (llm.ToolResult, error)
 ```
 
-- [ ] **Step 4: Re-run tests**
+- [x] **Step 4: Re-run tests**
 
 Run: `go test ./internal/skill -run 'TestExecutor' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/skill/executor.go internal/skill/executor_test.go internal/skill/skill.go internal/skill/builtin.go
