@@ -3,6 +3,7 @@ package main
 import (
 	"agentic-core/internal/bus"
 	gw "agentic-core/internal/gateway"
+	"agentic-core/internal/gateway/dingtalk"
 	"agentic-core/internal/gateway/feishu"
 	"agentic-core/internal/gateway/wecom"
 	"agentic-core/internal/gateway/wecomrobot"
@@ -123,6 +124,36 @@ func buildGatewayMux(cfg gw.Config, router *gw.SessionRouter) (*http.ServeMux, e
 		router.RegisterAdapter(feishu.NewBotAdapter(feishu.BotConfig{
 			WebhookURL: cfg.FeishuBot.WebhookURL,
 			Secret:     cfg.FeishuBot.Secret,
+		}, nil))
+	}
+
+	if cfg.DingTalkApp.IsEnabled() {
+		adapter, err := dingtalk.NewAppAdapter(dingtalk.AppConfig{
+			ClientID:             cfg.DingTalkApp.ClientID,
+			ClientSecret:         cfg.DingTalkApp.ClientSecret,
+			AgentID:              cfg.DingTalkApp.AgentID,
+			EventCallbackPath:    cfg.DingTalkApp.EventCallbackPath,
+			CardCallbackPath:     cfg.DingTalkApp.CardCallbackPath,
+			APIBaseURL:           cfg.DingTalkApp.APIBaseURL,
+			OAPIBaseURL:          cfg.DingTalkApp.OAPIBaseURL,
+			Token:                cfg.DingTalkApp.Token,
+			AESKey:               cfg.DingTalkApp.AESKey,
+			MediaDir:             cfg.DingTalkApp.MediaDir,
+			CardTemplateID:       cfg.DingTalkApp.CardTemplateID,
+			CardCallbackRouteKey: cfg.DingTalkApp.CardCallbackRouteKey,
+		}, nil)
+		if err != nil {
+			return nil, err
+		}
+		router.RegisterAdapter(adapter)
+		mux.Handle(cfg.DingTalkApp.EventCallbackPath, adapter.EventHandler(router))
+		mux.Handle(cfg.DingTalkApp.CardCallbackPath, adapter.CardHandler(router))
+	}
+
+	if cfg.DingTalkRobot.IsEnabled() {
+		router.RegisterAdapter(dingtalk.NewRobotAdapter(dingtalk.RobotConfig{
+			WebhookURL: cfg.DingTalkRobot.WebhookURL,
+			Secret:     cfg.DingTalkRobot.Secret,
 		}, nil))
 	}
 

@@ -146,3 +146,82 @@ func TestParseConfigRejectsNoEnabledAdapter(t *testing.T) {
 		t.Fatal("expected ParseConfig to reject empty adapter config")
 	}
 }
+
+func TestParseConfigAllowsDingTalkAppOnlyMode(t *testing.T) {
+	t.Setenv("GATEWAY_HTTP_PORT", ":8089")
+	t.Setenv("GATEWAY_REDIS_ADDR", "redis.internal:6379")
+	t.Setenv("DINGTALK_APP_ENABLED", "true")
+	t.Setenv("DINGTALK_APP_CLIENT_ID", "ding-app-id")
+	t.Setenv("DINGTALK_APP_CLIENT_SECRET", "ding-app-secret")
+	t.Setenv("DINGTALK_APP_AGENT_ID", "900001")
+	t.Setenv("DINGTALK_APP_TOKEN", "ding-token")
+	t.Setenv("DINGTALK_APP_AES_KEY", "ding-aes-key")
+	t.Setenv("DINGTALK_APP_EVENT_CALLBACK_PATH", "/callbacks/dingtalk/events")
+	t.Setenv("DINGTALK_APP_CARD_CALLBACK_PATH", "/callbacks/dingtalk/cards")
+
+	cfg, err := ParseConfig(nil)
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+
+	if !cfg.DingTalkApp.Enabled {
+		t.Fatal("expected dingtalk app to be enabled")
+	}
+	if cfg.DingTalkApp.ClientID != "ding-app-id" {
+		t.Fatalf("expected dingtalk app id, got %s", cfg.DingTalkApp.ClientID)
+	}
+	if cfg.DingTalkApp.EventCallbackPath != "/callbacks/dingtalk/events" {
+		t.Fatalf("expected dingtalk event callback path, got %s", cfg.DingTalkApp.EventCallbackPath)
+	}
+	if cfg.DingTalkRobot.Enabled {
+		t.Fatal("expected dingtalk robot to stay disabled")
+	}
+}
+
+func TestParseConfigReadsDingTalkCardDefaults(t *testing.T) {
+	t.Setenv("GATEWAY_HTTP_PORT", ":8089")
+	t.Setenv("GATEWAY_REDIS_ADDR", "redis.internal:6379")
+	t.Setenv("DINGTALK_APP_ENABLED", "true")
+	t.Setenv("DINGTALK_APP_CLIENT_ID", "ding-app-id")
+	t.Setenv("DINGTALK_APP_CLIENT_SECRET", "ding-app-secret")
+	t.Setenv("DINGTALK_APP_AGENT_ID", "900001")
+	t.Setenv("DINGTALK_APP_TOKEN", "ding-token")
+	t.Setenv("DINGTALK_APP_AES_KEY", "ding-aes-key")
+	t.Setenv("DINGTALK_APP_CARD_TEMPLATE_ID", "tpl-default")
+	t.Setenv("DINGTALK_APP_CARD_CALLBACK_ROUTE_KEY", "route-default")
+
+	cfg, err := ParseConfig(nil)
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+
+	if cfg.DingTalkApp.CardTemplateID != "tpl-default" {
+		t.Fatalf("expected card template id tpl-default, got %s", cfg.DingTalkApp.CardTemplateID)
+	}
+	if cfg.DingTalkApp.CardCallbackRouteKey != "route-default" {
+		t.Fatalf("expected card callback route key route-default, got %s", cfg.DingTalkApp.CardCallbackRouteKey)
+	}
+}
+
+func TestParseConfigAllowsDingTalkRobotOnlyMode(t *testing.T) {
+	t.Setenv("GATEWAY_HTTP_PORT", ":8089")
+	t.Setenv("GATEWAY_REDIS_ADDR", "redis.internal:6379")
+	t.Setenv("DINGTALK_ROBOT_ENABLED", "true")
+	t.Setenv("DINGTALK_ROBOT_WEBHOOK_URL", "https://oapi.dingtalk.com/robot/send?access_token=demo")
+	t.Setenv("DINGTALK_ROBOT_SECRET", "robot-secret")
+
+	cfg, err := ParseConfig(nil)
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+
+	if !cfg.DingTalkRobot.Enabled {
+		t.Fatal("expected dingtalk robot to be enabled")
+	}
+	if cfg.DingTalkRobot.WebhookURL == "" {
+		t.Fatal("expected dingtalk robot webhook url")
+	}
+	if cfg.DingTalkApp.Enabled {
+		t.Fatal("expected dingtalk app to stay disabled")
+	}
+}

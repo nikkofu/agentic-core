@@ -14,6 +14,7 @@
 *   [Process & Scheduling](./architecture/process_scheduling.md): 进程级调度与隔离机制说明。
 *   [Gateway WeCom Runbook](./gateway_wecom_runbook.md): 企业微信 Gateway、自建应用回调、统一 JSON 入站、群机器人 webhook 联调手册。
 *   [Gateway Feishu Runbook](./gateway_feishu_runbook.md): 飞书 Gateway、自建应用事件回调、卡片回调、群机器人 webhook 与 direct-send 联调手册。
+*   [Gateway DingTalk Runbook](./gateway_dingtalk_runbook.md): 钉钉 Gateway、企业应用 HTTP 回调、会话回发、工作通知回退、交互卡片与群机器人 webhook 联调手册。
 
 ### 3. 通信协议
 *   [Internal Bus Protocol](./protocol/internal_bus.md): Redis/MQTT 消息定义与状态机说明。
