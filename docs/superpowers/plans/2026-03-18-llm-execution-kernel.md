@@ -134,31 +134,31 @@ git commit -m "feat(llm): add openai-compatible request validation and error map
 - Create: `internal/llm/routes_test.go`
 - Modify: `internal/llm/resolver.go`
 
-- [ ] **Step 1: Write failing routing tests**
+- [x] **Step 1: Write failing routing tests**
 
 ```go
 func TestResolveByAliasReturnsStaticRoute(t *testing.T) {}
 func TestResolveByAliasReturnsErrorWhenMissing(t *testing.T) {}
 ```
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 Run: `go test ./internal/llm -run 'TestResolveByAlias' -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement route table + resolver binding**
+- [x] **Step 3: Implement route table + resolver binding**
 
 ```go
 func (r *ModelResolver) RegisterRoute(route StaticRoute)
 func (r *ModelResolver) ResolveByAlias(alias string) (Provider, StaticRoute, error)
 ```
 
-- [ ] **Step 4: Re-run tests**
+- [x] **Step 4: Re-run tests**
 
 Run: `go test ./internal/llm -run 'TestResolveByAlias' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/llm/routes.go internal/llm/routes_test.go internal/llm/resolver.go
