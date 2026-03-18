@@ -351,7 +351,7 @@ git commit -m "feat(skill): add builtin unified tool executor"
 - Modify: `cmd/orchestrator/main.go`
 - Modify: `cmd/orchestrator/main_test.go`
 
-- [ ] **Step 1: Write failing webhook security tests**
+- [x] **Step 1: Write failing webhook security tests**
 
 ```go
 func TestWebhookRejectsInvalidHMAC(t *testing.T) {}
@@ -360,23 +360,23 @@ func TestWebhookRejectsReplayedNonce(t *testing.T) {}
 func TestWebhookAcceptsValidSignedRequest(t *testing.T) {}
 ```
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 Run: `go test ./cmd/orchestrator ./internal/skill -run 'TestWebhook' -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement auth middleware and nonce store**
+- [x] **Step 3: Implement auth middleware and nonce store**
 
 ```go
 func VerifyWebhookSignature(headers http.Header, body []byte, secret string, now time.Time) error
 ```
 
-- [ ] **Step 4: Re-run tests**
+- [x] **Step 4: Re-run tests**
 
 Run: `go test ./cmd/orchestrator ./internal/skill -run 'TestWebhook' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/skill/webhook_auth.go internal/skill/webhook_auth_test.go cmd/orchestrator/main.go cmd/orchestrator/main_test.go
