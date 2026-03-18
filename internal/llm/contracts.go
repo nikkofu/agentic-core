@@ -58,6 +58,53 @@ type ToolResult struct {
 	DurationMs int64  `json:"duration_ms"`
 }
 
+// StreamChunk 统一流式事件模型
+type StreamChunk struct {
+	TraceID     string          `json:"trace_id"`
+	SessionID   string          `json:"session_id"`
+	TaskID      string          `json:"task_id"`
+	Sequence    int64           `json:"sequence"`
+	Event       string          `json:"event"` // delta | tool_call | tool_result | final | error | heartbeat | done
+	Delta       string          `json:"delta,omitempty"`
+	Role        string          `json:"role,omitempty"`
+	ToolName    string          `json:"tool_name,omitempty"`
+	Done        bool            `json:"done"`
+	Error       string          `json:"error,omitempty"`
+	Data        json.RawMessage `json:"data,omitempty"`
+	TimestampMs int64           `json:"timestamp_ms"`
+}
+
+// FinalResult 推理最终结果
+type FinalResult struct {
+	TraceID     string `json:"trace_id"`
+	TaskID      string `json:"task_id"`
+	Content     string `json:"content"`
+	Status      string `json:"status"` // success | error | timeout | cancelled
+	TokensUsed  int    `json:"tokens_used"`
+	TimestampMs int64  `json:"timestamp_ms"`
+}
+
+// ApprovalRequest 审批请求
+type ApprovalRequest struct {
+	TraceID       string          `json:"trace_id"`
+	TaskID        string          `json:"task_id"`
+	ToolCallID    string          `json:"tool_call_id"`
+	ToolName      string          `json:"tool_name"`
+	Arguments     json.RawMessage `json:"arguments"`
+	RequestedAtMs int64           `json:"requested_at_ms"`
+}
+
+// ApprovalDecision 审批决策
+type ApprovalDecision struct {
+	TraceID     string `json:"trace_id"`
+	TaskID      string `json:"task_id"`
+	ToolCallID  string `json:"tool_call_id"`
+	Approved    bool   `json:"approved"`
+	Reviewer    string `json:"reviewer"`
+	Reason      string `json:"reason"`
+	DecidedAtMs int64  `json:"decided_at_ms"`
+}
+
 // ChatCompletionRequest 对应 OpenAI API 请求
 type ChatCompletionRequest struct {
 	Model       string          `json:"model"`

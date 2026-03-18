@@ -394,7 +394,7 @@ git commit -m "feat(hitl): add signed webhook auth with replay protection"
 - Modify: `cmd/orchestrator/main.go`
 - Modify: `cmd/orchestrator/main_test.go`
 
-- [ ] **Step 1: Write failing approval-gate tests**
+- [x] **Step 1: Write failing approval-gate tests**
 
 ```go
 func TestApprovalGateApprovesOnce(t *testing.T) {}
@@ -404,12 +404,12 @@ func TestApprovalGateLateDecisionIgnoredAfterTimeout(t *testing.T) {}
 func TestApprovalGateConcurrentApproveRejectFirstWriterWins(t *testing.T) {}
 ```
 
-- [ ] **Step 2: Run failing tests**
+- [x] **Step 2: Run failing tests**
 
 Run: `go test ./internal/skill ./cmd/orchestrator -run 'TestApprovalGate|TestApproval' -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement approval wait/decision flow**
+- [x] **Step 3: Implement approval wait/decision flow**
 
 ```go
 func (g *ApprovalGate) WaitDecision(ctx context.Context, req ApprovalRequest) (ApprovalDecision, error)
@@ -420,12 +420,12 @@ Implementation constraints:
 - 冲突决策（approve/reject 并发）采用 CAS 先写入成功者生效
 - 失败写入路径必须审计 `ignored_conflict_decision`
 
-- [ ] **Step 4: Re-run tests**
+- [x] **Step 4: Re-run tests**
 
 Run: `go test ./internal/skill ./cmd/orchestrator -run 'TestApprovalGate|TestApproval' -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/skill/approval_gate.go internal/skill/approval_gate_test.go internal/bus/message.go cmd/orchestrator/main.go cmd/orchestrator/main_test.go
