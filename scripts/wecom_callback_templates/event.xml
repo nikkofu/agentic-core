@@ -1,0 +1,9 @@
+<xml>
+<ToUserName><![CDATA[__CORP_ID__]]></ToUserName>
+<FromUserName><![CDATA[__FROM_USER__]]></FromUserName>
+<CreateTime>__CREATE_TIME__</CreateTime>
+<MsgType><![CDATA[event]]></MsgType>
+<Event><![CDATA[__EVENT__]]></Event>
+<ChangeType><![CDATA[__CHANGE_TYPE__]]></ChangeType>
+<AgentID>__AGENT_ID__</AgentID>
+</xml>
