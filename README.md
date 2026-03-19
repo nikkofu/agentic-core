@@ -7,9 +7,9 @@ The Runtime Governance Reset plan re-centers the project on verifiable capabilit
 
 ## 已实现 / 可证明能力
 - `POST /v1/chat/completions` remains the Phase A gold path for driving kernel-level requests, so this entry point is the factual locus of proofed traffic.
-- Strict request validation enforces the signed approval callback, timeout, and late-decision handling described in the backlog.
+- Strict request validation on `POST /v1/chat/completions` enforces the schema, required fields, and gating expected by the backlog.
 - Static model routing captures the current resolver surface while downstream hardening continues.
-- Approval webhook signature verification plus timeout/late-decision handling are part of the proven flow.
+- Approval webhook signature verification, timeout, and late-decision handling are part of the proven flow between orchestrator and human approvers.
 - Unified chunk/SSE event modeling powers the gateway slices and fanout that serve each `POST /v1/chat/completions` session.
 - Task terminal states and unified logging foundation keep the runtime governance kernel traceable.
 - Gateway channel slices (HTTP, WeCom, Feishu, DingTalk) deliver the same logged session narrative across channels.
@@ -19,8 +19,7 @@ The Runtime Governance Reset plan re-centers the project on verifiable capabilit
 - Durable audit evidence chain is still being consolidated and awaits hardened replay tooling.
 - Sticky session routing prototypes exist, but resilience and handshake proofs are in active hardening.
 - Model resolver hardening continues to guarantee the correct backend selection per session.
-- Token-aware context governance and session history hardening are being shaped against the backlog’s safety contracts.
-- Builtin tool execution governance is under hardening so each tool call can be audited and supervised.
+- Token-aware context governance and builtin tool execution governance remain in-flight against the backlog’s safety contracts.
 - Session history hardening remains in-flight so every conversation can reconstruct the input context unequivocally.
 
 ## 明确延后能力
@@ -28,4 +27,4 @@ The Runtime Governance Reset plan re-centers the project on verifiable capabilit
 - WebAssembly (`wazero`) as the active production backend is deferred until governance safety fences are proven.
 - Production OTEL observability and metrics pipelines are explicitly delayed; current logging remains the honest data source.
 - Advanced multi-agent collaboration semantics (parallel streams, policy guards, `@agent` namespacing) are queued for later platform milestones.
-- Additional channel productization and enterprise-grade controls beyond the kernel proof story are deferred until the runtime kernels’ truth is widely shared.
+- Additional channel productization and enterprise-grade controls beyond the kernel proof story are deferred until the runtime governance proof is ready for wider distribution.

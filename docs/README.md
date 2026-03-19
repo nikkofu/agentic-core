@@ -6,7 +6,7 @@
 - [Runtime Governance Reset Plan](./superpowers/plans/2026-03-18-runtime-governance-reset.md)：当前核心定位与治理重置的执行计划。
 - [Task Backlog](./roadmap/task_backlog.md)：分解的任务清单与优先级，用于跟踪什么时候可以将“partial” 项目推向“implemented”。
 - [Phase A Spec](./superpowers/specs/2026-03-19-phase-a-doc-truth-proof-design.md)：经过批准的 Phase A 规范，指导文档与 proof 的边界。
-- [docs/testing/gold_path_proof.md](./testing/gold_path_proof.md)：gold_path_proof 是本阶段对照 Proof Story 的实际执行入口，直接链接跳转。
+- [docs/testing/gold_path_proof.md](./testing/gold_path_proof.md)：gold_path_proof 是未来 Phase A proof guide 的占位锚点；在完整指南整理完成前，请继续以 Runtime Governance Reset Plan、Task Backlog 与 Phase A Spec 作为当前的 source-of-truth。
 
 ## 当前状态矩阵
 状态矩阵把项目能力划为 implemented / partial / deferred，以便在文档中保持一致：
@@ -21,5 +21,5 @@
 | Observability | deferred | Production OTEL/metrics pipelines are delayed; current logging is the honest source of truth. |
 
 ## 证明入口
-- [docs/testing/gold_path_proof.md](./testing/gold_path_proof.md)：gold_path_proof 文档记录了如何重放当前 runtime 证明链，并对照 Runtime Governance Reset 与 Task Backlog 中的 implemented/partial/deferred 状态。
+- [docs/testing/gold_path_proof.md](./testing/gold_path_proof.md)：gold_path_proof 文档仍是占位锚点，具体 proof buckets/命令尚在整理中；当前的 reset plan、Task Backlog 与 Phase A Spec 继续作为真实执行故事的来源。
 - 所有进一步的 proof 资料和日志应回到上述计划、Task Backlog 与 Phase A Spec，确保每条声明都有人负责验证。
