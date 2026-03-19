@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly BUCKETS=(
-  approval-success
-  approval-reject
-  approval-timeout-late-decision
-  audit-replay
-  sse-abort
-  gateway-route
-  smoke
-  all
-)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
 
 usage() {
   cat <<'EOF'
@@ -37,7 +30,7 @@ run_step() {
   echo "==> bucket: $bucket"
   for cmd in "$@"; do
     echo "--> $cmd"
-    if ! eval "$cmd"; then
+    if ! bash -lc "$cmd"; then
       echo "FAIL: $bucket"
       exit 1
     fi
