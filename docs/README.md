@@ -13,9 +13,12 @@
 
 | 轨道 | 状态 | 说明 |
 | --- | --- | --- |
-| Kernel runtime + governance | implemented | 控制层通过 `os/exec` 子进程、Redis/MQTT 总线、SQLite 状态存储可证明地运转，体现真实的 runtime 能力。 |
-| Collaboration、memory、sandbox | partial | `@agent` 语法仍是简单调度，Milvus 的向量搜素只是原型，Wasm 沙盒也还在实验中；OpenTelemetry 也是试验性集成。 |
-| Deferred platform capabilities | deferred | 全面 production RAG/Milvus 执行链、完整的 `@agent` 协作语义、Wasm 作为 default backend、production OTEL observability 等已经被明确延后。 |
+| Kernel runtime + governance | implemented | `POST /v1/chat/completions` gold path, strict validation/approval callbacks, unified chunk/SSE fanout, terminal states, gateway channel slices, and the logging foundation anchor the traceable kernel proof. |
+| Governance hardening | partial | Durable audit evidence chain, sticky session routing, and model resolver hardening remain active proof tasks. |
+| Context / session / tool hardening | partial | Token-aware context governance, builtin tool governance, and session history hardening continue to be shaped against the backlog’s safety contracts. |
+| Memory / RAG | deferred | Milvus/RAG in the main execution path is postponed until Phase B proof completion. |
+| Sandbox backend | deferred | WebAssembly (`wazero`) serving as the production backend is deferred until governance safety fences are proven. |
+| Observability | deferred | Production OTEL/metrics pipelines are delayed; current logging is the honest source of truth. |
 
 ## 证明入口
 - [docs/testing/gold_path_proof.md](./testing/gold_path_proof.md)：gold_path_proof 文档记录了如何重放当前 runtime 证明链，并对照 Runtime Governance Reset 与 Task Backlog 中的 implemented/partial/deferred 状态。
