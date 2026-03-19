@@ -66,6 +66,9 @@ func (g *ApprovalGate) WaitDecision(ctx context.Context, req llm.ApprovalRequest
 	waitCh := make(chan llm.ApprovalDecision, 1)
 	g.addWaiter(key, approvalWaiter{traceID: req.TraceID, ch: waitCh})
 	defer g.removeWaiter(key, waitCh)
+	if decision, ok := g.takePendingDecision(key, req.TraceID); ok {
+		return decision, nil
+	}
 
 	// 2. 设置超时
 	timer := time.NewTimer(timeout)

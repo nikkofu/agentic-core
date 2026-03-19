@@ -17,12 +17,12 @@ import (
 )
 
 type ChatCompletionsHandler struct {
-	resolver     *llm.ModelResolver
-	sender       *Sender
-	auditor      *process.Auditor
-	taskStore    memory.TaskStateStore
-	executor     llm.ToolExecutor
-	approvalGate llm.ApprovalGate
+	resolver             *llm.ModelResolver
+	sender               *Sender
+	auditor              *process.Auditor
+	taskStore            memory.TaskStateStore
+	registry             *skill.Registry
+	approvalGateOverride llm.ApprovalGate
 }
 
 func NewChatCompletionsHandler(resolver *llm.ModelResolver, sender *Sender) *ChatCompletionsHandler {
@@ -30,31 +30,29 @@ func NewChatCompletionsHandler(resolver *llm.ModelResolver, sender *Sender) *Cha
 }
 
 func NewChatCompletionsHandlerWithStore(resolver *llm.ModelResolver, sender *Sender, taskStore memory.TaskStateStore) *ChatCompletionsHandler {
+	return NewChatCompletionsHandlerWithStoreAndRegistry(resolver, sender, taskStore, nil)
+}
+
+func NewChatCompletionsHandlerWithStoreAndRegistry(resolver *llm.ModelResolver, sender *Sender, taskStore memory.TaskStateStore, registry *skill.Registry) *ChatCompletionsHandler {
+	return NewChatCompletionsHandlerWithStoreRegistryAndApprovalGate(resolver, sender, taskStore, registry, nil)
+}
+
+func NewChatCompletionsHandlerWithStoreRegistryAndApprovalGate(resolver *llm.ModelResolver, sender *Sender, taskStore memory.TaskStateStore, registry *skill.Registry, approvalGate llm.ApprovalGate) *ChatCompletionsHandler {
 	var auditor *process.Auditor
 	if sender != nil {
 		auditor = process.NewAuditor(sender.events, "gateway.chat")
 	}
+	if approvalGate == nil && sender != nil {
+		approvalGate = skill.NewApprovalGate(sender.events)
+	}
 	return &ChatCompletionsHandler{
-		resolver:  resolver,
-		sender:    sender,
-		auditor:   auditor,
-		taskStore: taskStore,
+		resolver:             resolver,
+		sender:               sender,
+		auditor:              auditor,
+		taskStore:            taskStore,
+		registry:             registry,
+		approvalGateOverride: approvalGate,
 	}
-}
-
-func NewChatCompletionsHandlerWithStoreRegistryAndApprovalGate(
-	resolver *llm.ModelResolver,
-	sender *Sender,
-	taskStore memory.TaskStateStore,
-	registry *skill.Registry,
-	approvalGate llm.ApprovalGate,
-) *ChatCompletionsHandler {
-	handler := NewChatCompletionsHandlerWithStore(resolver, sender, taskStore)
-	if registry != nil {
-		handler.executor = skill.NewExecutor(registry)
-	}
-	handler.approvalGate = approvalGate
-	return handler
 }
 
 func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -75,13 +73,18 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, status, typ, msg)
 		return
 	}
-	if req.Stream && len(req.Tools) > 0 {
-		h.writeError(w, http.StatusBadRequest, "invalid_request_error", "tools are not yet supported on streaming gateway chat completions path")
-		return
-	}
-	if len(req.Tools) > 0 && h.executor == nil {
-		h.writeError(w, http.StatusBadRequest, "invalid_request_error", "tools are not yet supported on the gateway chat completions path")
-		return
+
+	registry := h.skillRegistry()
+	if len(req.Tools) > 0 {
+		toolNames, err := parseRequestedToolNames(req.Tools)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+		if err := ensureSupportedRequestedTools(registry, toolNames); err != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
 	}
 
 	// 1. 解析模型别名路由
@@ -102,45 +105,54 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		Stream:      req.Stream,
 		Temperature: req.Temperature,
 	}
+	if len(req.Tools) > 0 {
+		infReq.Metadata = map[string]string{
+			"requested_tools": string(req.Tools),
+			"tool_choice":     string(req.ToolChoice),
+		}
+		infReq.OnApprovalReject = "fail"
+	}
 	h.recordRouteAudit(r.Context(), infReq)
 	h.persistTaskState(r.Context(), infReq.TaskID, "gateway.chat", "running", "")
 
 	if req.Stream {
 		h.handleStream(r.Context(), w, provider, infReq)
 	} else {
-		h.handleNonStream(r.Context(), w, provider, infReq, len(req.Tools) > 0)
+		h.handleNonStream(r.Context(), w, provider, infReq)
 	}
 }
 
-func (h *ChatCompletionsHandler) handleNonStream(ctx context.Context, w http.ResponseWriter, p llm.Provider, req llm.InferenceRequest, toolMode bool) {
-	if h.sender != nil || toolMode {
-		taskID := req.TaskID
-		if taskID == "" {
-			taskID = req.TraceID
-		}
-		req.TaskID = taskID
+func (h *ChatCompletionsHandler) handleNonStream(ctx context.Context, w http.ResponseWriter, p llm.Provider, req llm.InferenceRequest) {
+	taskID := req.TaskID
+	if taskID == "" {
+		taskID = req.TraceID
+	}
+	req.TaskID = taskID
 
-		var fanout *llm.Fanout
-		if h.sender != nil {
-			fanout = llm.NewFanout(req.TraceID, req.SessionID, taskID)
-			fanout.SetPublisher(h.sender.PublishChunk)
-		}
+	var fanout *llm.Fanout
+	if h.sender != nil {
+		fanout = llm.NewFanout(req.TraceID, req.SessionID, taskID)
+		fanout.SetPublisher(h.sender.PublishChunk)
+	}
 
-		runtime := llm.NewRuntime(chatCompletionRuntimeProvider{
-			provider:           p,
-			passthroughActions: toolMode,
-		}, h.executor, h.approvalGate)
-		if !toolMode {
-			runtime.MaxTurns = 1
+	if h.sender != nil || hasRequestedTools(req) {
+		runtime := llm.NewRuntime(chatCompletionRuntimeProvider{provider: p, wrapFinal: true}, nil, nil)
+		runtime.MaxTurns = 1
+		if hasRequestedTools(req) {
+			var err error
+			req.Messages, err = buildGatewayToolRuntimeMessages(h.skillRegistry(), req.Messages, req.Metadata["requested_tools"], req.Metadata["tool_choice"])
+			if err != nil {
+				h.persistTaskState(ctx, req.TaskID, "gateway.chat", "failed", err.Error())
+				h.writeError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+				return
+			}
+			executor := skill.NewExecutor(h.skillRegistry())
+			runtime = llm.NewRuntime(chatCompletionRuntimeProvider{provider: p}, executor, h.approvalGate())
 		}
 
 		result, err := runtime.Run(ctx, req, fanout)
 		if err != nil {
-			statusToPersist := result.Status
-			if statusToPersist == "" {
-				statusToPersist = "failed"
-			}
-			h.persistTaskState(ctx, req.TaskID, "gateway.chat", statusToPersist, err.Error())
+			h.persistTaskState(ctx, req.TaskID, "gateway.chat", taskStatusForResult(result, err), err.Error())
 			status, typ, msg := llm.MapProviderError(err)
 			h.writeError(w, status, typ, msg)
 			return
@@ -152,7 +164,7 @@ func (h *ChatCompletionsHandler) handleNonStream(ctx context.Context, w http.Res
 
 	content, err := p.Predict(ctx, req)
 	if err != nil {
-		h.persistTaskState(ctx, req.TaskID, "gateway.chat", "failed", err.Error())
+		h.persistTaskState(ctx, req.TaskID, "gateway.chat", taskStatusForError(err), err.Error())
 		status, typ, msg := llm.MapProviderError(err)
 		h.writeError(w, status, typ, msg)
 		return
@@ -185,6 +197,11 @@ func (h *ChatCompletionsHandler) writeNonStreamResponse(w http.ResponseWriter, r
 }
 
 func (h *ChatCompletionsHandler) handleStream(ctx context.Context, w http.ResponseWriter, p llm.Provider, req llm.InferenceRequest) {
+	if hasRequestedTools(req) && h.sender == nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_request_error", "streaming tool execution requires gateway sender support")
+		return
+	}
+
 	SetSSEHeaders(w)
 
 	if h.sender == nil {
@@ -204,9 +221,32 @@ func (h *ChatCompletionsHandler) handleStream(ctx context.Context, w http.Respon
 	fanout := llm.NewFanout(req.TraceID, req.SessionID, taskID)
 	fanout.SetPublisher(h.sender.PublishChunk)
 
-	err := h.bridgeProviderStream(ctx, p, req, fanout)
+	var err error
+	if hasRequestedTools(req) {
+		req.Messages, err = buildGatewayToolRuntimeMessages(h.skillRegistry(), req.Messages, req.Metadata["requested_tools"], req.Metadata["tool_choice"])
+		if err != nil {
+			h.persistTaskState(ctx, req.TaskID, "gateway.chat", "failed", err.Error())
+			data, _ := json.Marshal(map[string]string{"error": err.Error()})
+			_ = WriteSSEFrame(adaptResponseWriter(w), "error", data)
+			_ = WriteDoneFrame(adaptResponseWriter(w))
+			return
+		}
+		executor := skill.NewExecutor(h.skillRegistry())
+		runtime := llm.NewRuntime(chatCompletionRuntimeProvider{provider: p}, executor, h.approvalGate())
+		result, runErr := runtime.Run(ctx, req, fanout)
+		err = runErr
+		if err != nil {
+			h.persistTaskState(ctx, req.TaskID, "gateway.chat", taskStatusForResult(result, err), err.Error())
+		}
+	} else {
+		err = h.bridgeProviderStream(ctx, p, req, fanout)
+	}
 	if err != nil {
-		h.persistTaskState(ctx, req.TaskID, "gateway.chat", "failed", err.Error())
+		if hasRequestedTools(req) {
+			h.waitForSinkDrain(ctx, taskID)
+			return
+		}
+		h.persistTaskState(ctx, req.TaskID, "gateway.chat", taskStatusForError(err), err.Error())
 	} else {
 		h.persistTaskState(ctx, req.TaskID, "gateway.chat", "success", "")
 	}
@@ -372,8 +412,8 @@ func parseProviderStreamPayload(raw []byte) (delta string, streamErr string, err
 }
 
 type chatCompletionRuntimeProvider struct {
-	provider           llm.Provider
-	passthroughActions bool
+	provider  llm.Provider
+	wrapFinal bool
 }
 
 func (p chatCompletionRuntimeProvider) Predict(ctx context.Context, req llm.InferenceRequest) (string, error) {
@@ -381,14 +421,14 @@ func (p chatCompletionRuntimeProvider) Predict(ctx context.Context, req llm.Infe
 	if err != nil {
 		return "", err
 	}
-	if p.passthroughActions {
-		return content, nil
+	if p.wrapFinal {
+		payload, err := json.Marshal(llm.ActionEnvelope{Final: content})
+		if err != nil {
+			return "", err
+		}
+		return string(payload), nil
 	}
-	payload, err := json.Marshal(llm.ActionEnvelope{Final: content})
-	if err != nil {
-		return "", err
-	}
-	return string(payload), nil
+	return content, nil
 }
 
 func (p chatCompletionRuntimeProvider) PredictStream(ctx context.Context, req llm.InferenceRequest) (io.ReadCloser, error) {
@@ -429,6 +469,102 @@ func (h *ChatCompletionsHandler) persistTaskState(ctx context.Context, taskID, a
 	})
 }
 
+type requestedFunctionTool struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name string `json:"name"`
+	} `json:"function"`
+}
+
+func parseRequestedToolNames(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var tools []requestedFunctionTool
+	if err := json.Unmarshal(raw, &tools); err != nil {
+		return nil, fmt.Errorf("invalid tools payload: %w", err)
+	}
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Function.Name)
+	}
+	return names, nil
+}
+
+func ensureSupportedRequestedTools(registry *skill.Registry, names []string) error {
+	for _, name := range names {
+		if _, ok := registry.Get(name); !ok {
+			return fmt.Errorf("tool %s is not supported on the gateway chat completions path", name)
+		}
+	}
+	return nil
+}
+
+func newGatewaySkillRegistry() *skill.Registry {
+	registry := skill.NewRegistry()
+	registry.Register(&skill.CurrentTimeSkill{})
+	registry.Register(&skill.HttpGetSkill{})
+	return registry
+}
+
+func (h *ChatCompletionsHandler) skillRegistry() *skill.Registry {
+	if h != nil && h.registry != nil {
+		return h.registry
+	}
+	return newGatewaySkillRegistry()
+}
+
+func (h *ChatCompletionsHandler) approvalGate() llm.ApprovalGate {
+	if h != nil && h.approvalGateOverride != nil {
+		return h.approvalGateOverride
+	}
+	if h != nil && h.sender != nil {
+		return skill.NewApprovalGate(h.sender.events)
+	}
+	return nil
+}
+
+func hasRequestedTools(req llm.InferenceRequest) bool {
+	return req.Metadata != nil && strings.TrimSpace(req.Metadata["requested_tools"]) != ""
+}
+
+func buildGatewayToolRuntimeMessages(registry *skill.Registry, messages []llm.ChatMessage, requestedToolsRaw string, toolChoiceRaw string) ([]llm.ChatMessage, error) {
+	if registry == nil {
+		registry = newGatewaySkillRegistry()
+	}
+	toolNames, err := parseRequestedToolNames(json.RawMessage(requestedToolsRaw))
+	if err != nil {
+		return nil, err
+	}
+
+	builder := llm.NewSystemPromptBuilder("gateway.chat")
+	builder.AddInstruction("You are executing a chat completion request with gateway-managed tools.")
+	builder.AddInstruction("You must respond with a JSON object matching exactly one of: {\"think\":\"...\",\"call_skill\":{\"id\":\"...\",\"name\":\"...\",\"arguments\":{...},\"is_write_operation\":<tool-required-bool>}} or {\"think\":\"...\",\"final\":\"...\"}.")
+	builder.AddInstruction("When calling a tool, use only the provided builtin tool names and JSON object arguments.")
+	if toolChoiceRaw != "" && toolChoiceRaw != "\"auto\"" {
+		builder.AddInstruction("Respect the caller's tool_choice constraint while staying within the available builtin tools.")
+	}
+
+	for _, name := range toolNames {
+		toolDef, ok := registry.Get(name)
+		if !ok {
+			return nil, fmt.Errorf("tool %s is not supported on the gateway chat completions path", name)
+		}
+		builder.AddInstruction(fmt.Sprintf("Tool %s requires is_write_operation=%t.", toolDef.Name(), toolDef.IsWriteOperation()))
+		builder.AddTool(llm.ToolInfo{
+			Name:        toolDef.Name(),
+			Description: toolDef.Description(),
+			Params:      toolDef.Schema(),
+		})
+	}
+
+	prompt := builder.Build()
+	return append([]llm.ChatMessage{{
+		Role:    "system",
+		Content: prompt,
+	}}, messages...), nil
+}
+
 func (h *ChatCompletionsHandler) writeError(w http.ResponseWriter, status int, typ, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -438,6 +574,32 @@ func (h *ChatCompletionsHandler) writeError(w http.ResponseWriter, status int, t
 			"message": msg,
 		},
 	})
+}
+
+func taskStatusForResult(result llm.FinalResult, err error) string {
+	if result.Status != "" {
+		return result.Status
+	}
+	return taskStatusForError(err)
+}
+
+func taskStatusForError(err error) string {
+	if err == nil {
+		return "success"
+	}
+	errLower := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case strings.Contains(errLower, "approval rejected"):
+		return "rejected"
+	case strings.Contains(errLower, "timeout"):
+		return "timeout"
+	default:
+		return "failed"
+	}
 }
 
 type ChatCompletionStreamSink struct {
