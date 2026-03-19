@@ -2,9 +2,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: agentic-core-redis
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--port", "6379"] # 内部容器保持 6379，外部映射修改
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-16379}:6379"
     environment:
       TZ: Asia/Shanghai
     volumes:
@@ -15,8 +15,8 @@ services:
     image: eclipse-mosquitto:2
     container_name: agentic-core-mosquitto
     ports:
-      - "1883:1883"
-      - "9001:9001"
+      - "${MQTT_PORT:-11883}:1883"
+      - "${MQTT_WS_PORT:-19001}:9001"
     environment:
       TZ: Asia/Shanghai
     volumes:
@@ -38,7 +38,7 @@ services:
       -listen-client-urls=http://0.0.0.0:2379
       --data-dir=/etcd
     ports:
-      - "2379:2379"
+      - "${ETCD_PORT:-12379}:2379"
     volumes:
       - etcd-data:/etcd
     restart: unless-stopped
@@ -52,8 +52,8 @@ services:
       TZ: Asia/Shanghai
     command: minio server /minio_data --console-address ":9001"
     ports:
-      - "9000:9000"
-      - "19001:9001"
+      - "${MINIO_API_PORT:-19000}:9000"
+      - "${MINIO_CONSOLE_PORT:-19001}:9001"
     volumes:
       - minio-data:/minio_data
     restart: unless-stopped
@@ -67,8 +67,8 @@ services:
       MINIO_ADDRESS: minio:9000
       TZ: Asia/Shanghai
     ports:
-      - "19530:19530"
-      - "9091:9091"
+      - "${MILVUS_PORT:-11953}:19530"
+      - "${MILVUS_WEB_PORT:-19091}:9091"
     volumes:
       - milvus-data:/var/lib/milvus
     depends_on:

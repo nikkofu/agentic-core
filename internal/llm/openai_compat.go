@@ -151,6 +151,8 @@ func MapProviderError(err error) (status int, typ string, msg string) {
 	switch {
 	case strings.Contains(errStr, "invalid_request_error"):
 		return 400, "invalid_request_error", errStr
+	case strings.Contains(errStr, "approval rejected"):
+		return 403, "permission_error", errStr
 	case strings.Contains(errStr, "401") || strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "invalid_api_key"):
 		return 401, "authentication_error", errStr
 	case strings.Contains(errStr, "429") || strings.Contains(errStr, "rate_limit"):

@@ -4,6 +4,7 @@ import (
 	"agentic-core/internal/llm"
 	"agentic-core/internal/memory"
 	"agentic-core/internal/process"
+	"agentic-core/internal/skill"
 	"bufio"
 	"context"
 	"encoding/json"
@@ -16,10 +17,12 @@ import (
 )
 
 type ChatCompletionsHandler struct {
-	resolver  *llm.ModelResolver
-	sender    *Sender
-	auditor   *process.Auditor
-	taskStore memory.TaskStateStore
+	resolver     *llm.ModelResolver
+	sender       *Sender
+	auditor      *process.Auditor
+	taskStore    memory.TaskStateStore
+	executor     llm.ToolExecutor
+	approvalGate llm.ApprovalGate
 }
 
 func NewChatCompletionsHandler(resolver *llm.ModelResolver, sender *Sender) *ChatCompletionsHandler {
@@ -37,6 +40,21 @@ func NewChatCompletionsHandlerWithStore(resolver *llm.ModelResolver, sender *Sen
 		auditor:   auditor,
 		taskStore: taskStore,
 	}
+}
+
+func NewChatCompletionsHandlerWithStoreRegistryAndApprovalGate(
+	resolver *llm.ModelResolver,
+	sender *Sender,
+	taskStore memory.TaskStateStore,
+	registry *skill.Registry,
+	approvalGate llm.ApprovalGate,
+) *ChatCompletionsHandler {
+	handler := NewChatCompletionsHandlerWithStore(resolver, sender, taskStore)
+	if registry != nil {
+		handler.executor = skill.NewExecutor(registry)
+	}
+	handler.approvalGate = approvalGate
+	return handler
 }
 
 func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +75,11 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, status, typ, msg)
 		return
 	}
-	if len(req.Tools) > 0 {
+	if req.Stream && len(req.Tools) > 0 {
+		h.writeError(w, http.StatusBadRequest, "invalid_request_error", "tools are not yet supported on streaming gateway chat completions path")
+		return
+	}
+	if len(req.Tools) > 0 && h.executor == nil {
 		h.writeError(w, http.StatusBadRequest, "invalid_request_error", "tools are not yet supported on the gateway chat completions path")
 		return
 	}
@@ -86,27 +108,39 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	if req.Stream {
 		h.handleStream(r.Context(), w, provider, infReq)
 	} else {
-		h.handleNonStream(r.Context(), w, provider, infReq)
+		h.handleNonStream(r.Context(), w, provider, infReq, len(req.Tools) > 0)
 	}
 }
 
-func (h *ChatCompletionsHandler) handleNonStream(ctx context.Context, w http.ResponseWriter, p llm.Provider, req llm.InferenceRequest) {
-	if h.sender != nil {
+func (h *ChatCompletionsHandler) handleNonStream(ctx context.Context, w http.ResponseWriter, p llm.Provider, req llm.InferenceRequest, toolMode bool) {
+	if h.sender != nil || toolMode {
 		taskID := req.TaskID
 		if taskID == "" {
 			taskID = req.TraceID
 		}
 		req.TaskID = taskID
 
-		fanout := llm.NewFanout(req.TraceID, req.SessionID, taskID)
-		fanout.SetPublisher(h.sender.PublishChunk)
+		var fanout *llm.Fanout
+		if h.sender != nil {
+			fanout = llm.NewFanout(req.TraceID, req.SessionID, taskID)
+			fanout.SetPublisher(h.sender.PublishChunk)
+		}
 
-		runtime := llm.NewRuntime(chatCompletionRuntimeProvider{provider: p}, nil, nil)
-		runtime.MaxTurns = 1
+		runtime := llm.NewRuntime(chatCompletionRuntimeProvider{
+			provider:           p,
+			passthroughActions: toolMode,
+		}, h.executor, h.approvalGate)
+		if !toolMode {
+			runtime.MaxTurns = 1
+		}
 
 		result, err := runtime.Run(ctx, req, fanout)
 		if err != nil {
-			h.persistTaskState(ctx, req.TaskID, "gateway.chat", "failed", err.Error())
+			statusToPersist := result.Status
+			if statusToPersist == "" {
+				statusToPersist = "failed"
+			}
+			h.persistTaskState(ctx, req.TaskID, "gateway.chat", statusToPersist, err.Error())
 			status, typ, msg := llm.MapProviderError(err)
 			h.writeError(w, status, typ, msg)
 			return
@@ -338,13 +372,17 @@ func parseProviderStreamPayload(raw []byte) (delta string, streamErr string, err
 }
 
 type chatCompletionRuntimeProvider struct {
-	provider llm.Provider
+	provider           llm.Provider
+	passthroughActions bool
 }
 
 func (p chatCompletionRuntimeProvider) Predict(ctx context.Context, req llm.InferenceRequest) (string, error) {
 	content, err := p.provider.Predict(ctx, req)
 	if err != nil {
 		return "", err
+	}
+	if p.passthroughActions {
+		return content, nil
 	}
 	payload, err := json.Marshal(llm.ActionEnvelope{Final: content})
 	if err != nil {

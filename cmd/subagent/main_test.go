@@ -3,12 +3,26 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"io"
+	"os"
 	"testing"
 	"time"
 
 	"agentic-core/internal/bus"
+	"agentic-core/internal/llm"
 )
+
+type providerErrorStub struct {
+	err error
+}
+
+func (p *providerErrorStub) Predict(ctx context.Context, req llm.InferenceRequest) (string, error) {
+	return "", p.err
+}
+
+func (p *providerErrorStub) PredictStream(ctx context.Context, req llm.InferenceRequest) (io.ReadCloser, error) {
+	return nil, nil
+}
 
 func TestParseConfigParsesAgentTypeAndTaskID(t *testing.T) {
 	cfg, err := ParseConfig([]string{"--agent-type", "planner", "--task-id", "task-1"})
@@ -35,11 +49,17 @@ func TestNewSubagentInitializesBuses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new subagent failed: %v", err)
 	}
-	if agent.pubsub == nil {
-		t.Fatal("expected pubsub initialized")
+	if agent.queue == nil {
+		t.Fatal("expected queue initialized")
+	}
+	if agent.events == nil {
+		t.Fatal("expected event bus initialized")
 	}
 	if agent.heartbeat == nil {
 		t.Fatal("expected heartbeat initialized")
+	}
+	if agent.logger == nil {
+		t.Fatal("expected logger initialized")
 	}
 }
 
@@ -57,46 +77,22 @@ func TestSubagentRunReturnsCanceledContextError(t *testing.T) {
 	}
 }
 
-func TestSubagentRunPublishesEventAndHeartbeat(t *testing.T) {
+func TestSubagentRunPublishesHeartbeat(t *testing.T) {
 	cfg := Config{AgentType: "planner", TaskID: "task-1", RedisAddr: "skip", MQTTBroker: "skip"}
 	agent, err := NewSubagent(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("new subagent failed: %v", err)
 	}
 
-	// Task channel must have a message to avoid blocking
-	msg := bus.Message{
-		MessageID:  "task-1",
-		SenderID:   "orchestrator",
-		ReceiverID: "task-1",
-		Payload:    json.RawMessage(`{"cmd":"echo hello"}`),
-		Timestamp:  time.Now().UnixMilli(),
-	}
-	_ = agent.pubsub.Publish(context.Background(), "task.task-1", msg)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	if err := agent.Run(ctx); err != nil && err != context.DeadlineExceeded {
-		t.Fatalf("expected run success, got %v", err)
-	}
+	// Run in background and wait for heartbeats
+	go func() {
+		_ = agent.Run(ctx)
+	}()
 
-	// Check start event
-	eventMsg, err := agent.pubsub.Consume(context.Background(), "subagent.events")
-	if err != nil {
-		t.Fatalf("expected start event, got %v", err)
-	}
-	
-	var payload struct {
-		Status    string `json:"status"`
-		AgentType string `json:"agent_type"`
-	}
-	if err := json.Unmarshal(eventMsg.Payload, &payload); err != nil {
-		t.Fatalf("unmarshal event payload failed: %v", err)
-	}
-	if payload.Status != "started" || payload.AgentType != "planner" {
-		t.Fatalf("unexpected payload: %+v", payload)
-	}
+	time.Sleep(100 * time.Millisecond)
 
 	// Check heartbeat
 	status, ok := agent.heartbeat.(*bus.FakeHeartbeatBus).LastStatus("task-1")
@@ -105,14 +101,188 @@ func TestSubagentRunPublishesEventAndHeartbeat(t *testing.T) {
 	}
 }
 
-func TestRunMainParsesAndRunsSubagent(t *testing.T) {
-	// Use a short timeout to prevent blocking indefinitely
+func TestMainParsesAndRunsSubagent(t *testing.T) {
+	// Simple sanity check that it starts and can be cancelled
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	err := runMain(ctx, []string{"--agent-type", "planner", "--task-id", "task-main", "--redis-addr", "skip", "--mqtt-broker", "skip"})
-	// We expect timeout because it will block on consuming task
-	if err != nil && err != context.DeadlineExceeded && !errors.Is(err, bus.ErrNoMessage) {
-		t.Fatalf("expected timeout or ErrNoMessage, got %v", err)
+	os.Args = []string{"subagent", "--agent-type", "planner", "--task-id", "task-main", "--redis-addr", "skip", "--mqtt-broker", "skip"}
+	// We don't call main() because it uses os.Exit
+	cfg, _ := ParseConfig(os.Args[1:])
+	s, _ := NewSubagent(ctx, cfg)
+	err := s.Run(ctx)
+
+	if err != nil && err != context.DeadlineExceeded {
+		t.Fatalf("expected timeout, got %v", err)
 	}
+}
+
+func TestSubagentPublishChunkPublishesEvent(t *testing.T) {
+	cfg := Config{AgentType: "planner", TaskID: "task-1", RedisAddr: "skip", MQTTBroker: "skip"}
+	agent, err := NewSubagent(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new subagent failed: %v", err)
+	}
+
+	transport, ok := agent.events.(*bus.FakeTransport)
+	if !ok {
+		t.Fatal("expected fake transport")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	msgs, err := transport.Subscribe(ctx, "chunks.task-1")
+	if err != nil {
+		t.Fatalf("subscribe failed: %v", err)
+	}
+
+	chunk := llm.StreamChunk{
+		TraceID:     "trace-1",
+		SessionID:   "session-1",
+		TaskID:      "task-1",
+		Sequence:    7,
+		Event:       "tool_result",
+		ToolName:    "http_get",
+		TimestampMs: time.Now().UnixMilli(),
+	}
+	if err := agent.publishChunk(ctx, chunk); err != nil {
+		t.Fatalf("publishChunk failed: %v", err)
+	}
+
+	select {
+	case msg := <-msgs:
+		if msg.MessageID != "chunk.task-1.7" {
+			t.Fatalf("unexpected message id: %s", msg.MessageID)
+		}
+		if msg.SenderID != "task-1" {
+			t.Fatalf("unexpected sender id: %s", msg.SenderID)
+		}
+		if msg.ReceiverID != "sender" {
+			t.Fatalf("unexpected receiver id: %s", msg.ReceiverID)
+		}
+
+		var got llm.StreamChunk
+		if err := json.Unmarshal(msg.Payload, &got); err != nil {
+			t.Fatalf("unmarshal chunk failed: %v", err)
+		}
+		if got.TaskID != chunk.TaskID || got.Sequence != chunk.Sequence || got.Event != chunk.Event {
+			t.Fatalf("unexpected chunk payload: %+v", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for chunk event")
+	}
+}
+
+func TestSubagentPublishChunkPublishesAuditEvent(t *testing.T) {
+	cfg := Config{AgentType: "planner", TaskID: "task-1", RedisAddr: "skip", MQTTBroker: "skip"}
+	agent, err := NewSubagent(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new subagent failed: %v", err)
+	}
+
+	transport, ok := agent.events.(*bus.FakeTransport)
+	if !ok {
+		t.Fatal("expected fake transport")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	msgs, err := transport.Subscribe(ctx, "audit.task-1")
+	if err != nil {
+		t.Fatalf("subscribe failed: %v", err)
+	}
+
+	chunk := llm.StreamChunk{
+		TraceID:     "trace-1",
+		SessionID:   "session-1",
+		TaskID:      "task-1",
+		Sequence:    7,
+		Event:       "tool_result",
+		ToolName:    "http_get",
+		TimestampMs: time.Now().UnixMilli(),
+		Data:        json.RawMessage(`{"result":"ok"}`),
+	}
+	if err := agent.publishChunk(ctx, chunk); err != nil {
+		t.Fatalf("publishChunk failed: %v", err)
+	}
+
+	select {
+	case msg := <-msgs:
+		var event llm.AuditEvent
+		if err := json.Unmarshal(msg.Payload, &event); err != nil {
+			t.Fatalf("unmarshal audit event failed: %v", err)
+		}
+		if event.TaskID != "task-1" || event.Event != "tool_result" {
+			t.Fatalf("unexpected audit event: %+v", event)
+		}
+		if event.Actor != "task-1" {
+			t.Fatalf("expected actor task-1, got %s", event.Actor)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for audit event")
+	}
+}
+
+func TestSubagentRunPreservesRuntimeTimeoutStatusInTaskResult(t *testing.T) {
+	cfg := Config{AgentType: "planner", TaskID: "task-1", RedisAddr: "skip", MQTTBroker: "skip", LLMProvider: "stub"}
+	agent, err := NewSubagent(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new subagent failed: %v", err)
+	}
+
+	agent.resolver.Register("stub", &providerErrorStub{err: context.DeadlineExceeded})
+	provider, ok := agent.resolver.Get("stub")
+	if !ok {
+		t.Fatal("expected stub provider registered")
+	}
+	agent.runtime = llm.NewRuntime(provider, nil, nil)
+
+	transport, ok := agent.queue.(*bus.FakeTransport)
+	if !ok {
+		t.Fatal("expected fake transport")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	results, err := transport.Dequeue(ctx, "task_results")
+	if err != nil {
+		t.Fatalf("dequeue results failed: %v", err)
+	}
+
+	if err := transport.Enqueue(ctx, "task.task-1", bus.Message{
+		MessageID:  "task-msg-1",
+		SenderID:   "orchestrator",
+		ReceiverID: "task-1",
+		Payload:    json.RawMessage(`{"task":"do work"}`),
+		Timestamp:  time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("enqueue task failed: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.Run(ctx)
+	}()
+
+	select {
+	case msg := <-results:
+		var result bus.TaskResult
+		if err := json.Unmarshal(msg.Payload, &result); err != nil {
+			t.Fatalf("unmarshal task result failed: %v", err)
+		}
+		if result.Status != "timeout" {
+			t.Fatalf("expected timeout status, got %s", result.Status)
+		}
+		if result.Error == "" {
+			t.Fatal("expected timeout error message preserved")
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for task result")
+	}
+
+	cancel()
+	<-done
 }

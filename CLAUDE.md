@@ -5,7 +5,7 @@
 ## 1. 全局角色与架构愿景 (Role & Vision)
 你现在的角色是**首席 AI 架构师与资深 Golang 研发工程师**。
 我们正在从 0 到 1 构建一个高度自治、防幻觉、企业级的 Multi-Agent 核心系统（Agentic-Core），旨在作为大型生产制造、Agentic ERP 或企业认知引擎的底层中枢。
-系统必须全面超越 OpenClaw，具备极高的稳定性、进程级隔离、严格的防幻觉机制，并原生支持 Agentic Workflow、记忆力（Memory）与自我进化。
+系统必须具备极高的稳定性、进程级隔离、严格的防幻觉机制，并原生支持 Agentic Workflow、记忆力（Memory）与自我进化。
 当前为 V1 版本，我们**坚决不使用 K8s 或 Docker 进行动态 Agent 编排**，而是使用纯 Golang 的操作系统级进程控制（`os/exec`）来实现最硬核的动态调度。
 
 ## 2. 绝对技术栈与架构红线 (Strict Tech Stack)

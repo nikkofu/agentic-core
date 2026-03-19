@@ -54,6 +54,36 @@ func TestApprovalGate(t *testing.T) {
 		}
 	})
 
+	t.Run("consumes decision published before wait begins", func(t *testing.T) {
+		earlyDecision := llm.ApprovalDecision{
+			TraceID:     "trace-1",
+			TaskID:      "task-1",
+			ToolCallID:  "call-1",
+			Approved:    true,
+			Reviewer:    "alice",
+			Reason:      "approved",
+			DecidedAtMs: time.Now().UnixMilli(),
+		}
+		payload, _ := json.Marshal(earlyDecision)
+		if err := transport.Publish(ctx, "approvals", bus.Message{
+			MessageID:  "approval.task-1.call-1.early",
+			SenderID:   "orchestrator",
+			ReceiverID: "task-1",
+			Payload:    payload,
+			Timestamp:  time.Now().UnixMilli(),
+		}); err != nil {
+			t.Fatalf("publish early decision failed: %v", err)
+		}
+
+		got, err := gate.WaitDecision(ctx, req, 100*time.Millisecond)
+		if err != nil {
+			t.Fatalf("expected early approval to be buffered, got error: %v", err)
+		}
+		if !got.Approved {
+			t.Fatalf("expected buffered approval=true, got %+v", got)
+		}
+	})
+
 	t.Run("times out", func(t *testing.T) {
 		_, err := gate.WaitDecision(ctx, req, 100*time.Millisecond)
 		if err == nil || err.Error() != "approval timeout" {
@@ -109,32 +139,10 @@ func TestApprovalGate(t *testing.T) {
 		}
 	})
 
-	t.Run("late decision after timeout leaves no active subscriber", func(t *testing.T) {
-		deadline := time.Now().Add(200 * time.Millisecond)
-		for time.Now().Before(deadline) {
-			if transport.SubscriberCount() == 0 {
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		if got := transport.SubscriberCount(); got != 0 {
-			t.Fatalf("expected no active subscribers before wait, got %d", got)
-		}
-
+	t.Run("late decision after timeout does not unblock unrelated wait", func(t *testing.T) {
 		_, err := gate.WaitDecision(ctx, req, 25*time.Millisecond)
 		if err == nil || err.Error() != "approval timeout" {
 			t.Fatalf("expected timeout error, got %v", err)
-		}
-
-		deadline = time.Now().Add(200 * time.Millisecond)
-		for time.Now().Before(deadline) {
-			if transport.SubscriberCount() == 0 {
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		if got := transport.SubscriberCount(); got != 0 {
-			t.Fatalf("expected subscriber cleanup after timeout, got %d", got)
 		}
 
 		latePayload, _ := json.Marshal(llm.ApprovalDecision{
@@ -154,8 +162,17 @@ func TestApprovalGate(t *testing.T) {
 			t.Fatalf("publish late decision failed: %v", err)
 		}
 
-		if got := transport.SubscriberCount(); got != 0 {
-			t.Fatalf("expected late decision to have no active listener, got %d", got)
+		otherReq := req
+		otherReq.ToolCallID = "call-2"
+		otherReq.ToolName = "write_file_other"
+		otherReq.RequestedAtMs = time.Now().UnixMilli()
+
+		_, err = gate.WaitDecision(ctx, otherReq, 25*time.Millisecond)
+		if err == nil || err.Error() != "approval timeout" {
+			t.Fatalf("expected unrelated wait to still timeout, got %v", err)
+		}
+		if gate.PendingDecisionCount() == 0 {
+			t.Fatal("expected late decision to be isolated in gate buffer")
 		}
 	})
 }

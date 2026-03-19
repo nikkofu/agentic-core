@@ -91,4 +91,9 @@ func TestMapProviderError(t *testing.T) {
 	if status != 400 || typ != "invalid_request_error" {
 		t.Fatalf("expected 400 invalid_request_error, got %d %s", status, typ)
 	}
+
+	status, typ, _ = MapProviderError(errors.New("approval rejected"))
+	if status != 403 || typ != "permission_error" {
+		t.Fatalf("expected 403 permission_error, got %d %s", status, typ)
+	}
 }
