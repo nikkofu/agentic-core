@@ -784,8 +784,8 @@ func TestSingleTaskReplayAuditPreservesTerminalResultStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected task state saved, got %v", err)
 	}
-	if state.Status != "failed" {
-		t.Fatalf("expected store status normalized to failed, got %s", state.Status)
+	if state.Status != memory.TaskStatusTimeout {
+		t.Fatalf("expected store status preserved as timeout, got %s", state.Status)
 	}
 
 	cancel()

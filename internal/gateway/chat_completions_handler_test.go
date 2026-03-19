@@ -7,6 +7,7 @@ import (
 	"agentic-core/internal/skill"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1166,5 +1167,43 @@ func TestChatCompletionsHandlerStreamPublishesUnifiedChunks(t *testing.T) {
 	}
 	if finalPayload["content"] != "hi" {
 		t.Fatalf("expected final content hi, got %+v", finalPayload)
+	}
+}
+
+func TestTaskStatusForErrorUsesSharedContractForTimeout(t *testing.T) {
+	if got := taskStatusForError(context.DeadlineExceeded); got != memory.TaskStatusTimeout {
+		t.Fatalf("expected timeout status %s, got %s", memory.TaskStatusTimeout, got)
+	}
+}
+
+func TestTaskStatusForErrorUsesSharedContractForRejected(t *testing.T) {
+	if got := taskStatusForError(errors.New("approval rejected by policy")); got != memory.TaskStatusRejected {
+		t.Fatalf("expected rejected status %s, got %s", memory.TaskStatusRejected, got)
+	}
+}
+
+func TestTaskStatusForErrorUsesSharedContractForCancelled(t *testing.T) {
+	if got := taskStatusForError(context.Canceled); got != memory.TaskStatusCancelled {
+		t.Fatalf("expected cancelled status %s, got %s", memory.TaskStatusCancelled, got)
+	}
+}
+
+func TestTaskStatusForResultUsesSharedContractForNormalizedStatus(t *testing.T) {
+	cases := []struct {
+		name   string
+		status string
+		want   string
+	}{
+		{name: "error maps to failed", status: "error", want: memory.TaskStatusFailed},
+		{name: "whitespace and case are normalized", status: " ReJeCtEd ", want: memory.TaskStatusRejected},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := taskStatusForResult(llm.FinalResult{Status: tc.status}, errors.New("ignored"))
+			if got != tc.want {
+				t.Fatalf("expected normalized status %s, got %s", tc.want, got)
+			}
+		})
 	}
 }

@@ -578,27 +578,27 @@ func (h *ChatCompletionsHandler) writeError(w http.ResponseWriter, status int, t
 
 func taskStatusForResult(result llm.FinalResult, err error) string {
 	if result.Status != "" {
-		return result.Status
+		return memory.NormalizeTaskStatus(result.Status)
 	}
 	return taskStatusForError(err)
 }
 
 func taskStatusForError(err error) string {
 	if err == nil {
-		return "success"
+		return memory.TaskStatusSuccess
 	}
 	errLower := strings.ToLower(err.Error())
 	switch {
 	case errors.Is(err, context.Canceled):
-		return "cancelled"
+		return memory.TaskStatusCancelled
 	case errors.Is(err, context.DeadlineExceeded):
-		return "timeout"
+		return memory.TaskStatusTimeout
 	case strings.Contains(errLower, "approval rejected"):
-		return "rejected"
+		return memory.TaskStatusRejected
 	case strings.Contains(errLower, "timeout"):
-		return "timeout"
+		return memory.TaskStatusTimeout
 	default:
-		return "failed"
+		return memory.TaskStatusFailed
 	}
 }
 

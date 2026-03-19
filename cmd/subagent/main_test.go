@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"agentic-core/internal/bus"
 	"agentic-core/internal/llm"
+	"agentic-core/internal/memory"
 )
 
 type providerErrorStub struct {
@@ -22,6 +24,22 @@ func (p *providerErrorStub) Predict(ctx context.Context, req llm.InferenceReques
 
 func (p *providerErrorStub) PredictStream(ctx context.Context, req llm.InferenceRequest) (io.ReadCloser, error) {
 	return nil, nil
+}
+
+type stubRuntime struct {
+	result llm.FinalResult
+	err    error
+}
+
+func (s *stubRuntime) Run(ctx context.Context, req llm.InferenceRequest, fanout *llm.Fanout) (llm.FinalResult, error) {
+	result := s.result
+	if result.TraceID == "" {
+		result.TraceID = req.TraceID
+	}
+	if result.TaskID == "" {
+		result.TaskID = req.TaskID
+	}
+	return result, s.err
 }
 
 func TestParseConfigParsesAgentTypeAndTaskID(t *testing.T) {
@@ -278,6 +296,126 @@ func TestSubagentRunPreservesRuntimeTimeoutStatusInTaskResult(t *testing.T) {
 		}
 		if result.Error == "" {
 			t.Fatal("expected timeout error message preserved")
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for task result")
+	}
+
+	cancel()
+	<-done
+}
+
+func TestSubagentRunPreservesRuntimeRejectedStatusInTaskResult(t *testing.T) {
+	cfg := Config{AgentType: "planner", TaskID: "task-1", RedisAddr: "skip", MQTTBroker: "skip"}
+	agent, err := NewSubagent(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new subagent failed: %v", err)
+	}
+
+	agent.runtime = &stubRuntime{
+		result: llm.FinalResult{Status: "REJECTED", Content: "denied"},
+		err:    errors.New("approval rejected"),
+	}
+
+	transport, ok := agent.queue.(*bus.FakeTransport)
+	if !ok {
+		t.Fatal("expected fake transport")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	results, err := transport.Dequeue(ctx, "task_results")
+	if err != nil {
+		t.Fatalf("dequeue results failed: %v", err)
+	}
+
+	if err := transport.Enqueue(ctx, "task.task-1", bus.Message{
+		MessageID:  "task-msg-1",
+		SenderID:   "orchestrator",
+		ReceiverID: "task-1",
+		Payload:    json.RawMessage(`{"task":"do work"}`),
+		Timestamp:  time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("enqueue task failed: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.Run(ctx)
+	}()
+
+	select {
+	case msg := <-results:
+		var result bus.TaskResult
+		if err := json.Unmarshal(msg.Payload, &result); err != nil {
+			t.Fatalf("unmarshal task result failed: %v", err)
+		}
+		if result.Status != memory.TaskStatusRejected {
+			t.Fatalf("expected rejected status, got %s", result.Status)
+		}
+		if result.Error != "approval rejected" {
+			t.Fatalf("expected rejection error preserved, got %q", result.Error)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for task result")
+	}
+
+	cancel()
+	<-done
+}
+
+func TestSubagentRunPreservesRuntimeCancelledStatusInTaskResult(t *testing.T) {
+	cfg := Config{AgentType: "planner", TaskID: "task-1", RedisAddr: "skip", MQTTBroker: "skip"}
+	agent, err := NewSubagent(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new subagent failed: %v", err)
+	}
+
+	agent.runtime = &stubRuntime{
+		result: llm.FinalResult{Status: "CaNcElLeD", Content: "stopped"},
+		err:    context.Canceled,
+	}
+
+	transport, ok := agent.queue.(*bus.FakeTransport)
+	if !ok {
+		t.Fatal("expected fake transport")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	results, err := transport.Dequeue(ctx, "task_results")
+	if err != nil {
+		t.Fatalf("dequeue results failed: %v", err)
+	}
+
+	if err := transport.Enqueue(ctx, "task.task-1", bus.Message{
+		MessageID:  "task-msg-1",
+		SenderID:   "orchestrator",
+		ReceiverID: "task-1",
+		Payload:    json.RawMessage(`{"task":"do work"}`),
+		Timestamp:  time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("enqueue task failed: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.Run(ctx)
+	}()
+
+	select {
+	case msg := <-results:
+		var result bus.TaskResult
+		if err := json.Unmarshal(msg.Payload, &result); err != nil {
+			t.Fatalf("unmarshal task result failed: %v", err)
+		}
+		if result.Status != memory.TaskStatusCancelled {
+			t.Fatalf("expected cancelled status, got %s", result.Status)
+		}
+		if result.Error != context.Canceled.Error() {
+			t.Fatalf("expected cancellation error preserved, got %q", result.Error)
 		}
 	case <-ctx.Done():
 		t.Fatal("timed out waiting for task result")
