@@ -15,6 +15,7 @@ Per the runtime-governance reset references (see `docs/superpowers/plans/2026-03
 - Broadcast events such as `approvals`, `chunks.<TaskID>`, and `system.health`/heartbeat channels remain on the event bus (`Publish`/`Subscribe`), honoring the split emphasized in the reset plan (Workstream 1). These topics use `bus.Message` envelopes with contributors like orchestrator, subagent, or approval gate acting as publishers.
 - `approvals` is the shared topic where the orchestrator emits approval request payloads (in `cmd/orchestrator/main.go`) and where `internal/skill.NewApprovalGate` listens for decisions (see `internal/skill/approval_gate.go`). Approval decisions may be emitted back onto `approvals` for clients that replay or audit them.
 - `chunks.<id>` topics stream runtime progress events emitted inside the subagent (`cmd/subagent/main.go`, `internal/gateway/sender.go`). The gateway’s sender subscribes to `chunks.*` and fanouts these events toward SSE clients while audit logging records each chunk event.
+- Audit events currently publish on `audit` (global) and `audit.<TaskID>` (per-task) topics, following the `Auditor` in `internal/process/audit.go`. Each `llm.AuditEvent` bubbles through those topics before being written to logging, keeping audit evidence available for both global and task-scoped listeners.
 
 ### Naming Expectations
 
