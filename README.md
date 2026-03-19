@@ -6,21 +6,26 @@ Phase A is about resetting the documentation truth: surface what the runtime/gov
 The Runtime Governance Reset plan re-centers the project on verifiable capabilities rather than from-scratch grand narratives. Refer to the [Runtime Governance Reset plan](docs/superpowers/plans/2026-03-18-runtime-governance-reset.md), the [Task Backlog](docs/roadmap/task_backlog.md), and the [Phase A spec](docs/superpowers/specs/2026-03-19-phase-a-doc-truth-proof-design.md) to see how proof of those capabilities feeds into the gold_path_proof execution story. This document surfaces implemented, partial, and deferred tracks to keep contributors aligned.
 
 ## 已实现 / 可证明能力
-- Runtime/governance kernel forks and monitors sub-agents via `os/exec`, with `cmd/orchestrator` driving task dispatch and `cmd/subagent` providing the runtime entry point.
-- `SQLite` stores the short-lived task state and metadata so the orchestrator can reflect on structured activity without speculative claims.
-- `Redis Pub/Sub` and `MQTT` buses already circulate task assignments, heartbeats, and simple operational telemetry; the infrastructure is observable via existing text-based logs.
-- Basic workflow orchestration, role-aware prompts, and manual `@` dispatch remain the current collaboration surface, with traceability kept in `internal/process` and `internal/workflow`.
-- Proof stories live in `docs/testing/gold_path_proof.md`, ensuring every implemented block can be replayed or audited.
+- `POST /v1/chat/completions` remains the Phase A gold path for driving kernel-level requests, so this entry point is the factual locus of proofed traffic.
+- Strict request validation enforces the signed approval callback, timeout, and late-decision handling described in the backlog.
+- Static model routing captures the current resolver surface while downstream hardening continues.
+- Approval webhook signature verification plus timeout/late-decision handling are part of the proven flow.
+- Unified chunk/SSE event modeling powers the gateway slices and fanout that serve each `POST /v1/chat/completions` session.
+- Task terminal states and unified logging foundation keep the runtime governance kernel traceable.
+- Gateway channel slices (HTTP, WeCom, Feishu, DingTalk) deliver the same logged session narrative across channels.
+- The logging foundation records every chunk, SSE event, and terminal transition needed for proofing.
 
 ## 部分实现能力
-- Collaboration semantics (`@agent` handoff and result delivery) are being hardened; the current shell is simple mention-based routing rather than a fully abstracted `@agent` contract.
-- Long-memory / RAG capability now tracks prototype runs with Milvus, but the vector-store path is still under proof-of-concept review and not yet in the execution pipeline.
-- WebAssembly (`wazero`) sandbox experiments run alongside `os/exec`, yet it is not the active execution backend for the orchestrator; hardening work continues.
-- Observability beyond console logs (e.g., structured traces/metrics) is being prototyped with OpenTelemetry but is not production-ready; the focus remains on honest, human-readable telemetry while the OTEL layer stabilizes.
+- Durable audit evidence chain is still being consolidated and awaits hardened replay tooling.
+- Sticky session routing prototypes exist, but resilience and handshake proofs are in active hardening.
+- Model resolver hardening continues to guarantee the correct backend selection per session.
+- Token-aware context governance and session history hardening are being shaped against the backlog’s safety contracts.
+- Builtin tool execution governance is under hardening so each tool call can be audited and supervised.
+- Session history hardening remains in-flight so every conversation can reconstruct the input context unequivocally.
 
 ## 明确延后能力
-- Production-grade RAG with Milvus or any vector database in the live execution path remains a deferred capability until Phase B.
-- Full `@agent` collaboration semantics (parallel sub-agent streaming, policy guards, `@agent` namespacing) is queued for a later platform milestone.
-- Treating WebAssembly as the active execution backend is postponed until governance and proof tooling can validate the runtime safety fences.
-- Production OTEL observability/exporters for every runtime component is delayed; basic logging is the honest source of truth today.
-- Enterprise-ready multi-agent platform marketing language (beyond the kernel + proof story) is deferred until the runtime/governance proof can be shared externally.
+- Milvus / RAG in the main execution path remains postponed until Phase B proof completion.
+- WebAssembly (`wazero`) as the active production backend is deferred until governance safety fences are proven.
+- Production OTEL observability and metrics pipelines are explicitly delayed; current logging remains the honest data source.
+- Advanced multi-agent collaboration semantics (parallel streams, policy guards, `@agent` namespacing) are queued for later platform milestones.
+- Additional channel productization and enterprise-grade controls beyond the kernel proof story are deferred until the runtime kernels’ truth is widely shared.
