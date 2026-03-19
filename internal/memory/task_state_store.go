@@ -12,7 +12,7 @@ type TaskState struct {
 	TaskID        string
 	ParentTaskID  string // 用于父子任务追踪
 	AgentName     string // 执行任务的 Agent 名称
-	Status        string // pending, running, success, failed
+	Status        string // pending, running, success, failed, rejected, timeout, cancelled
 	UpdatedAtUnix int64
 	ErrorMessage  string
 }
