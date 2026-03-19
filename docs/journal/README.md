@@ -1,0 +1,3 @@
+# Journal
+
+This journal directory is a placeholder for recording historical runtime/governance events or investigations if the team decides to keep a dated trail. For now, no entries exist; future additions should reflect what actually happened rather than speculated plans. When exploring the current truth, refer instead to the live source-of-truth documents: the runtime governance reset plan (`docs/superpowers/plans/2026-03-18-runtime-governance-reset.md`), the task backlog (`docs/roadmap/task_backlog.md`), and the Phase A truth/proof specs (`docs/superpowers/specs/2026-03-19-phase-a-doc-truth-proof-design.md`).
