@@ -6,9 +6,9 @@ Per the runtime-governance reset references (see `docs/superpowers/plans/2026-03
 
 ### Queue Semantics
 
-- `tasks` acts as the orchestrator’s work queue for ready workflow nodes (see `internal/process/exec_manager.go` and `cmd/orchestrator/main.go`). Only the workflow-driven path enqueues messages here; direct `/v1/chat/completions` requests that never touch the workflow still short-circuit into the gateway runtime.
+- `tasks` is the incoming queued work ingress for the routed adapter/session path—`internal/gateway/session_router.go`:100 enqueues channel messages here so the orchestrator can continue with workflow scheduling (see also `cmd/orchestrator/main.go:356`). No other handler currently writes to `tasks`; direct `/v1/chat/completions` flows that stay in the orchestrator skip this queue and run immediately inside the gateway runtime.
 - `task.<id>` is a dedicated per-subagent channel. A subagent subscribes to `Dequeue(ctx, "task."+TaskID)` (see `cmd/subagent/main.go`) and runs the LLM runtime only when a workflow payload arrives, keeping the execution scope tied to that `TaskID`.
-- `task_results` is a shared queue that subagents publish their terminal `bus.TaskResult` output onto via `Enqueue(ctx, "task_results", ...)`. The orchestrator’s `ListenResults` loop consumes those messages to update `memory.TaskStateStore`, drive `internal/workflow` node completion/failure, and emit audit events, but HTTP responses for direct gateway flows never travel through `task_results`.
+- `task_results` is a shared queue that subagents publish their terminal `bus.TaskResult` output onto via `Enqueue(ctx, "task_results", ...)`. The orchestrator’s `ListenResults` loop consumes those messages to update `memory.TaskStateStore`, drive `internal/workflow` node completion/failure, and emit audit events, while the gateway/session router also listens for the fanback on `task_results` to push replies back to external channels.
 
 ### Event Bus Semantics
 
