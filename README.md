@@ -1,57 +1,26 @@
-# Agentic-Core (企业级多智能体核心引擎) 🚀
+# Agentic-Core Phase A | Runtime Governance Reset
 
-Agentic-Core 是一个从零构建的、高度自治、防幻觉、企业级的 Multi-Agent 核心系统。旨在作为大型生产制造、Agentic ERP 或企业认知引擎的底层中枢。
+Phase A is about resetting the documentation truth: surface what the runtime/governance kernel already delivers, capture what is still being hardened, and clearly defer the rest of the platform ambitions until later phases.
 
-## 🌟 核心愿景
-与传统的基于 K8s 或 Docker 的编排不同，Agentic-Core 采用**最硬核的操作系统级进程控制 (`os/exec`)** 来实现动态调度，确保极高的响应速度和进程级隔离。原生支持 Agentic Workflow、长短记忆（RAG）与 Wasm 沙盒安全执行。
+## 当前阶段定位
+The Runtime Governance Reset plan re-centers the project on verifiable capabilities rather than from-scratch grand narratives. Refer to the [Runtime Governance Reset plan](docs/superpowers/plans/2026-03-18-runtime-governance-reset.md), the [Task Backlog](docs/roadmap/task_backlog.md), and the [Phase A spec](docs/superpowers/specs/2026-03-19-phase-a-doc-truth-proof-design.md) to see how proof of those capabilities feeds into the gold_path_proof execution story. This document surfaces implemented, partial, and deferred tracks to keep contributors aligned.
 
-## 🛠️ 技术栈与架构红线
-*   **核心语言**: Golang 1.21+ (Context 全程控制)。
-*   **进程调度**: 标准库 `os/exec` 动态 Fork 子进程（Sub-agents）。
-*   **消息总线**: `Redis Pub/Sub` 用于任务申领，`MQTT` 用于高频心跳状态监控。
-*   **记忆中枢**: 
-    *   **短记忆/执行状态**: `SQLite` (纯 Go 驱动 `glebarez/sqlite`)。
-    *   **长记忆/RAG**: `Milvus` (高性能向量数据库)。
-*   **沙盒执行**: 使用 WebAssembly (`wazero`) 进行代码级隔离执行。
-*   **团队协作**: 支持 `@` 语法（如 `@researcher`）实现子任务分发与结果交付，主任务实时监控。
+## 已实现 / 可证明能力
+- Runtime/governance kernel forks and monitors sub-agents via `os/exec`, with `cmd/orchestrator` driving task dispatch and `cmd/subagent` providing the runtime entry point.
+- `SQLite` stores the short-lived task state and metadata so the orchestrator can reflect on structured activity without speculative claims.
+- `Redis Pub/Sub` and `MQTT` buses already circulate task assignments, heartbeats, and simple operational telemetry; the infrastructure is observable via existing text-based logs.
+- Basic workflow orchestration, role-aware prompts, and manual `@` dispatch remain the current collaboration surface, with traceability kept in `internal/process` and `internal/workflow`.
+- Proof stories live in `docs/testing/gold_path_proof.md`, ensuring every implemented block can be replayed or audited.
 
-## 📁 目录结构
-*   `cmd/orchestrator/`: 编排器（主控节点）入口，负责任务分发与状态维护。
-*   `cmd/subagent/`: 子智能体进程入口，支持多种角色（Researcher, Coder 等）。
-*   `internal/process/`: 子进程生命周期管理与 Agent 注册表（Registry）。
-*   `internal/bus/`: Redis/MQTT 消息总线封装。
-*   `internal/memory/`: SQLite 任务状态存储与 Milvus 长记忆检索。
-*   `internal/workflow/`: 基于 DAG 的 Agentic Workflow 状态机。
-*   `internal/sandbox/`: Wasm 沙盒执行逻辑。
+## 部分实现能力
+- Collaboration semantics (`@agent` handoff and result delivery) are being hardened; the current shell is simple mention-based routing rather than a fully abstracted `@agent` contract.
+- Long-memory / RAG capability now tracks prototype runs with Milvus, but the vector-store path is still under proof-of-concept review and not yet in the execution pipeline.
+- WebAssembly (`wazero`) sandbox experiments run alongside `os/exec`, yet it is not the active execution backend for the orchestrator; hardening work continues.
+- Observability beyond console logs (e.g., structured traces/metrics) is being prototyped with OpenTelemetry but is not production-ready; the focus remains on honest, human-readable telemetry while the OTEL layer stabilizes.
 
-## 👥 团队协作功能 (New!)
-Agentic-Core 支持多智能体团队模式：
-1.  **角色感知**: 每个 Agent 启动时均加载其特定的角色提示词（Role Prompt）。
-2.  **子任务分发**: 主任务运行过程中，可以通过在 Payload 中使用 `@agent_name`（如：`@researcher 请帮我查阅...`）来动态请求其他专业智能体协助。
-3.  **层级监控**: Orchestrator 会自动维护父子任务关系，主任务在 SQLite 中能随时查看到子任务的执行进度与交付结果。
-
-## 🚀 快速启动
-
-### 1. 基础设施
-使用 Docker Compose 启动 Redis, MQTT 和 Milvus:
-```bash
-docker-compose up -d
-```
-
-### 2. 预检与演示
-运行预检脚本确认环境：
-```bash
-bash scripts/preflight.sh
-```
-
-运行演示脚本观察多智能体协作：
-```bash
-bash scripts/team_demo.sh
-```
-
-## 🛡️ 安全与防幻觉机制
-*   **强类型契约**: 所有的消息传递均基于严格定义的 Go struct 和 JSON Schema。
-*   **HITL (Human-in-the-loop)**: 对于高风险写操作，主控会自动挂起并触发 Webhook 审批请求。
-
----
-Developed by **nikkofu** | V1.0 Alpha
+## 明确延后能力
+- Production-grade RAG with Milvus or any vector database in the live execution path remains a deferred capability until Phase B.
+- Full `@agent` collaboration semantics (parallel sub-agent streaming, policy guards, `@agent` namespacing) is queued for a later platform milestone.
+- Treating WebAssembly as the active execution backend is postponed until governance and proof tooling can validate the runtime safety fences.
+- Production OTEL observability/exporters for every runtime component is delayed; basic logging is the honest source of truth today.
+- Enterprise-ready multi-agent platform marketing language (beyond the kernel + proof story) is deferred until the runtime/governance proof can be shared externally.

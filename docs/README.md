@@ -1,41 +1,22 @@
 # Agentic-Core 文档中心
 
-欢迎来到 Agentic-Core 的核心设计与规划中心。本项目致力于构建企业级的分布式多智能体引擎。
+欢迎来到 Agentic-Core 的核心规划与真相中心。本阶段工作聚焦于“Runtime Governance Reset”而非把未完成的功能当作既成事实。
 
-## 📖 文档导航
+## 当前执行锚点
+- [Runtime Governance Reset Plan](./superpowers/plans/2026-03-18-runtime-governance-reset.md)：当前核心定位与治理重置的执行计划。
+- [Task Backlog](./roadmap/task_backlog.md)：分解的任务清单与优先级，用于跟踪什么时候可以将“partial” 项目推向“implemented”。
+- [Phase A Spec](./superpowers/specs/2026-03-19-phase-a-doc-truth-proof-design.md)：经过批准的 Phase A 规范，指导文档与 proof 的边界。
+- [docs/testing/gold_path_proof.md](./testing/gold_path_proof.md)：gold_path_proof 是本阶段对照 Proof Story 的实际执行入口，直接链接跳转。
 
-### 1. 战略与规划
-*   [Master Roadmap](./enterprise_roadmap_agentic-core.md): 项目总体演进蓝图与阶段目标。
-*   [Runtime Governance Reset Plan](./superpowers/plans/2026-03-18-runtime-governance-reset.md): 项目再定位与 P0 / P1 / P2 整改计划。
-*   [Task Backlog](./roadmap/task_backlog.md): 详细的功能拆解与开发积压任务。
+## 当前状态矩阵
+状态矩阵把项目能力划为 implemented / partial / deferred，以便在文档中保持一致：
 
-### 2. 架构深度设计
-*   [Agentic-Core Architecture](./architecture/agentic-core_technical_deepdive.md): 对标 Agentic-Core 的技术细节规格书。
-*   [Process & Scheduling](./architecture/process_scheduling.md): 进程级调度与隔离机制说明。
-*   [Gateway WeCom Runbook](./gateway_wecom_runbook.md): 企业微信 Gateway、自建应用回调、统一 JSON 入站、群机器人 webhook 联调手册。
-*   [Gateway Feishu Runbook](./gateway_feishu_runbook.md): 飞书 Gateway、自建应用事件回调、卡片回调、群机器人 webhook 与 direct-send 联调手册。
-*   [Gateway DingTalk Runbook](./gateway_dingtalk_runbook.md): 钉钉 Gateway、企业应用 HTTP 回调、会话回发、工作通知回退、交互卡片与群机器人 webhook 联调手册。
+| 轨道 | 状态 | 说明 |
+| --- | --- | --- |
+| Kernel runtime + governance | implemented | 控制层通过 `os/exec` 子进程、Redis/MQTT 总线、SQLite 状态存储可证明地运转，体现真实的 runtime 能力。 |
+| Collaboration、memory、sandbox | partial | `@agent` 语法仍是简单调度，Milvus 的向量搜素只是原型，Wasm 沙盒也还在实验中；OpenTelemetry 也是试验性集成。 |
+| Deferred platform capabilities | deferred | 全面 production RAG/Milvus 执行链、完整的 `@agent` 协作语义、Wasm 作为 default backend、production OTEL observability 等已经被明确延后。 |
 
-### 3. 通信协议
-*   [Internal Bus Protocol](./protocol/internal_bus.md): Redis/MQTT 消息定义与状态机说明。
-
-### 4. 开发日志 (Journal)
-*   [Development Journal Index](./journal/README.md): 每日工作小结与决策记录。
-
----
-
-## 🛠️ 工程规范
-*   **路径规范**: 所有文档、脚本、代码中严禁使用绝对路径。必须使用相对项目根目录的路径。
-*   **提交规范**: 遵循 Angular Commit 规范。
-*   **文档同步**: 每次重大功能更新后，必须同步更新对应的 Markdown 文档。
-
-## 🪵 日志运行参数
-*   **默认目录**: `logs/YYYY-MM-DD/<service>.jsonl`
-*   **终端输出**: 默认开启，使用人类可读文本格式
-*   **文件输出**: 默认开启，使用 JSON Lines 结构化格式
-*   **日志级别**: `LOG_LEVEL`，支持 `debug` / `info` / `warn` / `error`，默认 `info`
-*   **日志目录**: `LOG_DIR`，默认 `logs`
-*   **保留天数**: `LOG_RETENTION_DAYS`，默认 `30`
-
-## ⚠️ 当前状态说明
-*   当前文档中心中的部分链接仍指向待补文档；在补齐前，请优先以 `docs/superpowers/plans/2026-03-18-runtime-governance-reset.md` 与 `docs/superpowers/specs/2026-03-18-llm-execution-kernel-design.md` 作为近期执行锚点。
+## 证明入口
+- [docs/testing/gold_path_proof.md](./testing/gold_path_proof.md)：gold_path_proof 文档记录了如何重放当前 runtime 证明链，并对照 Runtime Governance Reset 与 Task Backlog 中的 implemented/partial/deferred 状态。
+- 所有进一步的 proof 资料和日志应回到上述计划、Task Backlog 与 Phase A Spec，确保每条声明都有人负责验证。
