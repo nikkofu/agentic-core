@@ -305,11 +305,12 @@ func (a *App) ListenResults(ctx context.Context) error {
 			var res bus.TaskResult
 			_ = json.Unmarshal(msg.Payload, &res)
 
+			normalizedStatus := memory.NormalizeTaskStatus(res.Status)
 			state := memory.TaskState{
 				TaskID:        res.TaskID,
 				ParentTaskID:  res.ParentTaskID,
 				AgentName:     res.AgentName,
-				Status:        normalizeTaskStatus(res.Status),
+				Status:        normalizedStatus,
 				UpdatedAtUnix: time.Now().Unix(),
 				ErrorMessage:  res.Error,
 			}
@@ -319,7 +320,7 @@ func (a *App) ListenResults(ctx context.Context) error {
 			wf, exists := a.workflows[res.TaskID]
 			a.mu.RUnlock()
 			if exists {
-				if res.Status == "success" {
+				if memory.IsSuccessfulTaskStatus(normalizedStatus) {
 					_ = wf.MarkCompleted(ctx, res.TaskID)
 				} else {
 					_ = wf.MarkFailed(ctx, res.TaskID, res.Error)
@@ -411,15 +412,6 @@ func (a *App) ProcessOneTask(ctx context.Context) error {
 		})
 
 		return nil
-	}
-}
-
-func normalizeTaskStatus(status string) string {
-	switch status {
-	case "pending", "running", "success", "failed":
-		return status
-	default:
-		return "failed"
 	}
 }
 

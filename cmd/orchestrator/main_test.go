@@ -462,6 +462,149 @@ func TestListenResultsNormalizesFailedStatusesInStoreAndWorkflow(t *testing.T) {
 	}
 }
 
+func TestListenResultsPreservesTimeoutTaskState(t *testing.T) {
+	status := memory.TaskStatusTimeout
+	runListenResultsTerminalStateTest(t,
+		"file:orchestrator-timeout?mode=memory&cache=shared",
+		bus.TaskResult{
+			TaskID:    "task-timeout",
+			AgentName: "planner",
+			Status:    status,
+			Error:     "timeout waiting for subagent",
+			Timestamp: time.Now().Unix(),
+			Output:    json.RawMessage(`{"result":""}`),
+		},
+		memory.NormalizeTaskStatus(status),
+	)
+}
+
+func TestListenResultsPreservesRejectedTaskState(t *testing.T) {
+	status := memory.TaskStatusRejected
+	runListenResultsTerminalStateTest(t,
+		"file:orchestrator-rejected?mode=memory&cache=shared",
+		bus.TaskResult{
+			TaskID:    "task-rejected",
+			AgentName: "policy",
+			Status:    status,
+			Error:     "governance rejected execution",
+			Timestamp: time.Now().Unix(),
+			Output:    json.RawMessage(`{"result":""}`),
+		},
+		memory.NormalizeTaskStatus(status),
+	)
+}
+
+func TestListenResultsPreservesCancelledTaskState(t *testing.T) {
+	status := memory.TaskStatusCancelled
+	runListenResultsTerminalStateTest(t,
+		"file:orchestrator-cancelled?mode=memory&cache=shared",
+		bus.TaskResult{
+			TaskID:    "task-cancelled",
+			AgentName: "planner",
+			Status:    status,
+			Error:     "task cancelled by request",
+			Timestamp: time.Now().Unix(),
+			Output:    json.RawMessage(`{"result":""}`),
+		},
+		memory.NormalizeTaskStatus(status),
+	)
+}
+
+func TestListenResultsNormalizesUnknownTaskStateToFailed(t *testing.T) {
+	status := "governance.rejected"
+	runListenResultsTerminalStateTest(t,
+		"file:orchestrator-unknown?mode=memory&cache=shared",
+		bus.TaskResult{
+			TaskID:    "task-unknown",
+			AgentName: "policy",
+			Status:    status,
+			Error:     "unknown governance state",
+			Timestamp: time.Now().Unix(),
+			Output:    json.RawMessage(`{"result":""}`),
+		},
+		memory.NormalizeTaskStatus(status),
+	)
+}
+
+func runListenResultsTerminalStateTest(t *testing.T, sqliteDSN string, result bus.TaskResult, expectedStatus string) {
+	t.Helper()
+	cfg := AppConfig{SQLiteDSN: sqliteDSN, RedisAddr: "skip", MQTTBroker: "skip"}
+	app, err := NewApp(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new app failed: %v", err)
+	}
+
+	wf := workflow.NewWorkflow(func(ctx context.Context, agentType string, nodeID string) error {
+		return nil
+	})
+	if err := wf.AddTask(result.TaskID, "agent", nil); err != nil {
+		t.Fatalf("add task failed: %v", err)
+	}
+	if err := wf.Start(context.Background()); err != nil {
+		t.Fatalf("start workflow failed: %v", err)
+	}
+
+	app.mu.Lock()
+	app.workflows[result.TaskID] = wf
+	app.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- app.ListenResults(ctx)
+	}()
+
+	payload, _ := json.Marshal(result)
+	if err := app.queue.Enqueue(context.Background(), "task_results", bus.Message{
+		MessageID:  result.TaskID + ".result",
+		SenderID:   result.TaskID,
+		ReceiverID: "orchestrator",
+		Payload:    payload,
+		Timestamp:  time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("enqueue result failed: %v", err)
+	}
+
+	var state memory.TaskState
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		state, err = app.taskStore.Get(context.Background(), result.TaskID)
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("expected task state saved, got %v", err)
+	}
+	if state.Status != expectedStatus {
+		t.Fatalf("expected %s status, got %s", expectedStatus, state.Status)
+	}
+	if result.Error != "" && state.ErrorMessage != result.Error {
+		t.Fatalf("expected error message preserved, got %s", state.ErrorMessage)
+	}
+
+	nodeState, ok := wf.NodeState(result.TaskID)
+	if !ok {
+		t.Fatal("expected workflow node state")
+	}
+	if nodeState != workflow.NodeStateFailed {
+		t.Fatalf("expected workflow node failed, got %s", nodeState)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("unexpected ListenResults error: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for ListenResults to exit")
+	}
+}
+
 func TestGoldPathStoresSuccessResultAndCompletesWorkflow(t *testing.T) {
 	cfg := AppConfig{SQLiteDSN: "file:orchestrator-success?mode=memory&cache=shared", RedisAddr: "skip", MQTTBroker: "skip"}
 	app, err := NewApp(context.Background(), cfg)
