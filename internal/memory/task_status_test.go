@@ -22,6 +22,10 @@ func TestNormalizeTaskStatusFallsBackToFailed(t *testing.T) {
     if got := NormalizeTaskStatus("completely-unknown-status"); got != TaskStatusFailed {
         t.Fatalf("unexpected fallback status: got %q, want %q", got, TaskStatusFailed)
     }
+
+    if got := NormalizeTaskStatus("error"); got != TaskStatusFailed {
+        t.Fatalf("unexpected fallback for %q: got %v, want %v", "error", got, TaskStatusFailed)
+    }
 }
 
 func TestIsTerminalTaskStatus(t *testing.T) {
