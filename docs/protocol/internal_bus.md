@@ -6,16 +6,16 @@ Per the runtime-governance reset references (see `docs/superpowers/plans/2026-03
 
 ### Queue Semantics
 
-- `tasks` acts as the orchestrator’s central enqueue point for new TaskIDs (see `internal/process/exec_manager.go` and `cmd/orchestrator/main.go`). Incoming HTTP requests are translated into job payloads that are `Enqueue`d onto `tasks`, and the orchestrator waits for subagent results via `task_results`.
-- `task.<id>` is a dedicated per-subagent channel. A subagent subscribes to `Dequeue(ctx, "task."+TaskID)` (see `cmd/subagent/main.go`) and runs the LLM runtime only when a message arrives, keeping the subagent execution tightly scoped to a single task.
-- `task_results` is a shared queue that all subagents push their terminal outputs into via `Enqueue(ctx, "task_results", ...)`. The orchestrator consumes this queue to reconcile workflow nodes, audit state transitions, and emit final HTTP responses.
+- `tasks` acts as the orchestrator’s work queue for ready workflow nodes (see `internal/process/exec_manager.go` and `cmd/orchestrator/main.go`). Only the workflow-driven path enqueues messages here; direct `/v1/chat/completions` requests that never touch the workflow still short-circuit into the gateway runtime.
+- `task.<id>` is a dedicated per-subagent channel. A subagent subscribes to `Dequeue(ctx, "task."+TaskID)` (see `cmd/subagent/main.go`) and runs the LLM runtime only when a workflow payload arrives, keeping the execution scope tied to that `TaskID`.
+- `task_results` is a shared queue that subagents publish their terminal `bus.TaskResult` output onto via `Enqueue(ctx, "task_results", ...)`. The orchestrator’s `ListenResults` loop consumes those messages to update `memory.TaskStateStore`, drive `internal/workflow` node completion/failure, and emit audit events, but HTTP responses for direct gateway flows never travel through `task_results`.
 
 ### Event Bus Semantics
 
-- Broadcast events such as `approvals`, `chunks.<TaskID>`, and `system.health`/heartbeat channels remain on the event bus (`Publish`/`Subscribe`), honoring the split emphasized in the reset plan (Workstream 1). These topics use `bus.Message` envelopes with contributors like orchestrator, subagent, or approval gate acting as publishers.
-- `approvals` is the shared topic where the orchestrator emits approval request payloads (in `cmd/orchestrator/main.go`) and where `internal/skill.NewApprovalGate` listens for decisions (see `internal/skill/approval_gate.go`). Approval decisions may be emitted back onto `approvals` for clients that replay or audit them.
-- `chunks.<id>` topics stream runtime progress events emitted inside the subagent (`cmd/subagent/main.go`, `internal/gateway/sender.go`). The gateway’s sender subscribes to `chunks.*` and fanouts these events toward SSE clients while audit logging records each chunk event.
-- Audit events currently publish on `audit` (global) and `audit.<TaskID>` (per-task) topics, following the `Auditor` in `internal/process/audit.go`. Each `llm.AuditEvent` bubbles through those topics before being written to logging, keeping audit evidence available for both global and task-scoped listeners.
+- Broadcast events such as `chunks.<TaskID>` and `system.health`/heartbeat channels remain on the event bus (`Publish`/`Subscribe`), honoring the split emphasized in the reset plan (Workstream 1). These topics use `bus.Message` envelopes with contributors like orchestrator, subagent, or gateway sender acting as publishers.
+- `approvals` is the shared topic that approval webhook handlers publish decisions onto (see `cmd/orchestrator/main.go`), and `internal/skill.ApprovalGate` subscribes to those decisions. Approval requests surface as `waiting_approval` stream chunks on `chunks.<TaskID>` rather than being queued onto `approvals`.
+- `chunks.<id>` topics stream runtime progress events emitted inside the subagent (`cmd/subagent/main.go`) or gateway sender (`internal/gateway/sender.go`). The sender subscribes to `chunks.*`, fans those messages to SSE clients, and drives audit logging for each chunk event (`llm.StreamChunk`).
+- Audit events publish either to `audit` (when no `TaskID` is associated) or `audit.<TaskID>` (when task-scoped), as implemented in `internal/process/audit.go`. Each `llm.AuditEvent` chooses exactly one topic before being logged so that listeners can subscribe to the desired scope without duplicate events.
 
 ### Naming Expectations
 
