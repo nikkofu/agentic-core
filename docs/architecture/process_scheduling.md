@@ -22,5 +22,5 @@ The runtime-governance-reset plan (see `docs/superpowers/plans/2026-03-18-runtim
 ## Source-of-Truth References
 
 - `docs/superpowers/plans/2026-03-18-runtime-governance-reset.md` documents the reset priorities and Workstream 0/1 scope that justify this current process split.
-- `docs/roadmap/task_backlog.md` marks BG-102 as follow-on work for session routing and audit tracing around the orchestrator-subagent boundary.
+- `docs/roadmap/task_backlog.md` marks BG-102 as sticky session routing (see the backlog entry) and BG-101 as the audit evidence chain work around the orchestrator-subagent boundary.
 - `docs/superpowers/specs/2026-03-18-llm-execution-kernel-design.md` defines the runtime and approval contracts that the subagent currently enacts.
