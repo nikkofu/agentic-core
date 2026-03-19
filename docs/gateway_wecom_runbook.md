@@ -69,6 +69,96 @@ https://<your-domain>/callbacks/wecom
 - 图片、语音、视频、文件会自动下载到 `WECOM_MEDIA_DIR`
 - 若 `WECOM_MEDIA_RETENTION_DAYS > 0`，Gateway 启动时会立即清理一次过期媒体，随后后台周期性清理
 
+### 2.3 本地模拟企业微信回调
+
+默认 text 回调示例：
+
+```bash
+export WECOM_CORP_ID="ww-test-corp"
+export WECOM_AGENT_ID="1000002"
+export WECOM_TOKEN="gateway-token"
+export WECOM_ENCODING_AES_KEY="abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"
+export WECOM_CALLBACK_FROM_USER="lisi"
+export WECOM_CALLBACK_CONTENT="hello callback"
+
+bash scripts/wecom_callback_demo.sh
+```
+
+自定义 inner XML 示例：
+
+```bash
+cat >/tmp/wecom-inner.xml <<'EOF'
+<xml>
+<ToUserName><![CDATA[ww-test-corp]]></ToUserName>
+<FromUserName><![CDATA[lisi]]></FromUserName>
+<CreateTime>1773811200</CreateTime>
+<MsgType><![CDATA[text]]></MsgType>
+<Content><![CDATA[自定义回调]]></Content>
+<MsgId>1001</MsgId>
+<AgentID>1000002</AgentID>
+</xml>
+EOF
+
+export WECOM_CORP_ID="ww-test-corp"
+export WECOM_AGENT_ID="1000002"
+export WECOM_TOKEN="gateway-token"
+export WECOM_ENCODING_AES_KEY="abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"
+
+bash scripts/wecom_callback_demo.sh /tmp/wecom-inner.xml
+```
+
+内置模板示例：
+
+```bash
+export WECOM_CORP_ID="ww-test-corp"
+export WECOM_AGENT_ID="1000002"
+export WECOM_TOKEN="gateway-token"
+export WECOM_ENCODING_AES_KEY="abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"
+
+export WECOM_CALLBACK_TEMPLATE="image"
+export WECOM_CALLBACK_MEDIA_ID="MEDIA_IMAGE_001"
+export WECOM_CALLBACK_PIC_URL="https://example.com/demo.jpg"
+bash scripts/wecom_callback_demo.sh
+
+export WECOM_CALLBACK_TEMPLATE="voice"
+export WECOM_CALLBACK_MEDIA_ID="MEDIA_VOICE_001"
+export WECOM_CALLBACK_FORMAT="amr"
+bash scripts/wecom_callback_demo.sh
+
+export WECOM_CALLBACK_TEMPLATE="video"
+export WECOM_CALLBACK_MEDIA_ID="MEDIA_VIDEO_001"
+export WECOM_CALLBACK_THUMB_MEDIA_ID="MEDIA_VIDEO_THUMB_001"
+bash scripts/wecom_callback_demo.sh
+
+export WECOM_CALLBACK_TEMPLATE="file"
+export WECOM_CALLBACK_MEDIA_ID="MEDIA_FILE_001"
+bash scripts/wecom_callback_demo.sh
+
+export WECOM_CALLBACK_TEMPLATE="link"
+export WECOM_CALLBACK_TITLE="报警详情"
+export WECOM_CALLBACK_DESCRIPTION="主机 CPU 超过阈值"
+export WECOM_CALLBACK_URL="https://example.com/ticket/42"
+bash scripts/wecom_callback_demo.sh
+
+export WECOM_CALLBACK_TEMPLATE="location"
+export WECOM_CALLBACK_LOCATION_X="31.2304"
+export WECOM_CALLBACK_LOCATION_Y="121.4737"
+export WECOM_CALLBACK_SCALE="15"
+export WECOM_CALLBACK_LABEL="上海市黄浦区"
+bash scripts/wecom_callback_demo.sh
+
+export WECOM_CALLBACK_TEMPLATE="event"
+export WECOM_CALLBACK_EVENT="change_contact"
+export WECOM_CALLBACK_CHANGE_TYPE="create_user"
+bash scripts/wecom_callback_demo.sh
+```
+
+也可以直接把模板名作为位置参数传给脚本；若同时设置了 `WECOM_CALLBACK_TEMPLATE`，则位置参数优先：
+
+```bash
+bash scripts/wecom_callback_demo.sh video
+```
+
 ## 3. 通用 JSON 入站
 
 ### 3.1 无签名模式
@@ -123,11 +213,17 @@ curl -sS -X POST http://127.0.0.1:8081/v1/channels/incoming \
 {"status":"accepted","task_id":"session_..."}
 ```
 
+也可以直接使用 helper 脚本：
+
+```bash
+bash scripts/wecom_signed_ingress.sh /path/to/payload.json
+```
+
 ## 4. 企业微信群机器人 webhook 出站
 
 ### 4.1 通过统一入口触发机器人消息
 
-`wecom_robot` 是出站通道，推荐通过 `/v1/channels/incoming` 触发。
+`wecom_robot` 已接入实现，但能力边界仍是**出站-only**，推荐通过 `/v1/channels/incoming` 触发；企业微信群机器人协议本身不提供本项目所需的统一 IM 入站回调语义。
 
 Markdown 示例：
 
@@ -144,6 +240,14 @@ curl -sS -X POST http://127.0.0.1:8081/v1/channels/incoming \
       "wecom_robot_webhook_url":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=robot-key"
     }
   }'
+```
+
+也可以直接使用 demo 脚本：
+
+```bash
+export WECOM_ROBOT_WEBHOOK_URL="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=robot-key"
+export ROBOT_TEXT="**deploy success**"
+bash scripts/wecom_robot_markdown_demo.sh
 ```
 
 图片示例：

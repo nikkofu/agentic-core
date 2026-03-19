@@ -42,13 +42,14 @@
 钉钉官方开放平台提供服务端 SDK 下载入口，首版实现遵循“**尽量使用官方 SDK**”原则。但结合当前仓库结构与用户已确认的“HTTP 回调模式”，最佳拆分方式是：
 
 1. **`dingtalk_app` 优先使用官方 Go SDK / OpenAPI client**
-   - 适合处理 access token、服务端消息发送、媒体上传、卡片发送等服务端 API
-   - 能减少 OpenAPI 请求结构体和鉴权处理的手写工作量
+   - 当前落地采用“SDK + OAPI wrapper”混合方式
+   - access token 获取与交互卡片发送走官方 Go SDK
+   - 普通会话消息、工作通知与媒体上传走旧开放平台 OAPI wrapper，以覆盖当前 SDK 未完全封装的企业应用发送能力
 
 2. **HTTP 回调验签 / 解密采用官方协议兼容的仓内轻量适配层**
    - 钉钉 HTTP 回调与服务端发消息是两类协议关注点
    - 即使引入官方 SDK，回调入口、统一消息映射、Gateway 路由衔接仍需仓内适配
-   - 因此回调层应保持轻量、明确、可测试
+   - 因此回调层应保持轻量、明确、可测试，并支持加密回调验签、解密和加密 `success` ACK
 
 3. **`dingtalk_robot` 使用标准库轻量实现**
    - 机器人 webhook 与 app access token 生命周期解耦
@@ -59,7 +60,7 @@
 
 采用“**官方 SDK + 仓内轻量适配层**”方案：
 
-- `dingtalk_app`：优先使用官方 Go SDK / OpenAPI client 处理服务端 API
+- `dingtalk_app`：优先使用官方 Go SDK，并在普通消息发送 / 媒体上传上补充 OAPI 调用
 - `dingtalk_app` HTTP 回调：使用仓内 handler + mapper 适配 Gateway
 - `dingtalk_robot`：使用标准库实现 webhook client
 - Gateway 统一层负责抽象 `ChannelRequest` / `ChannelResponse`
@@ -75,8 +76,7 @@
 新增 `internal/gateway/dingtalk/` 目录，内部拆分为以下组件：
 
 - `config.go`：DingTalk app/robot 子配置与默认值
-- `app_adapter.go`：企业应用适配器，实现 `gateway.RichAdapter`
-- `app_handler.go`：HTTP 事件回调与互动卡片回调 HTTP handler
+- `app_adapter.go`：企业应用适配器，实现 `gateway.RichAdapter`，并承载 HTTP 事件回调与互动卡片回调 handler
 - `app_mapper.go`：事件 / 消息 / 卡片回调向统一消息模型的映射
 - `app_client.go`：基于官方 SDK / OpenAPI client 的发送封装
 - `robot_adapter.go`：群机器人适配器，实现 `gateway.RichAdapter`
@@ -230,7 +230,7 @@
 1. 根据 `ChannelResponse` 判断消息类型
 2. 构造官方 SDK / OpenAPI request
 3. 根据 `SessionID` 或 `Metadata` 中的接收目标字段填充接收对象
-4. 调用官方 SDK 发送消息
+4. 根据消息类型调用 SDK 或 OAPI wrapper 发送消息
 
 素材处理策略：
 
@@ -262,7 +262,7 @@
 
 ### 定位
 
-`dingtalk_robot` 是一个通知型 adapter，不承诺接收用户消息，也不依赖 route binding。它的主要职责是把 Agentic-Core 的结果、告警、摘要、审批提醒以文本、Markdown、卡片或媒体形式发进钉钉群。
+`dingtalk_robot` 是一个通知型 adapter，不承诺接收用户消息，也不依赖 route binding。它的主要职责是把 Agentic-Core 的结果、告警、摘要、审批提醒以文本、Markdown、卡片形式发进钉钉群。
 
 ### 配置
 
@@ -284,19 +284,13 @@
 
 - 文本
 - Markdown
-- 图片
-- 音频
-- 视频
-- 文件
 - 卡片
 
 说明：
 
-- 机器人协议原生不一定与 app API 在所有媒体类型上完全同构
-- 若某些媒体类型在机器人 webhook 协议中不支持“直接发媒体”，则 adapter 需要：
-  - 明确返回“不支持该消息类型”
-  - 或在 spec/实现中定义降级策略
-- 首版推荐优先保证文本、Markdown、卡片稳定；图片 / 文件按协议支持落地；音频 / 视频若 webhook 协议受限，可在实现中保留接口并给出显式错误，不做静默降级
+- 机器人协议与 app API 并不完全同构
+- 首版优先保证文本、Markdown、卡片稳定
+- 图片 / 音频 / 视频 / 文件当前统一返回显式错误，不做静默降级
 
 ## 配置设计
 
@@ -318,6 +312,8 @@
 - `DINGTALK_APP_AES_KEY`
 - `DINGTALK_APP_TOKEN`
 - `DINGTALK_APP_MEDIA_DIR`
+- `DINGTALK_APP_CARD_TEMPLATE_ID`
+- `DINGTALK_APP_CARD_CALLBACK_ROUTE_KEY`
 - `DINGTALK_ROBOT_ENABLED`
 - `DINGTALK_ROBOT_WEBHOOK_URL`
 - `DINGTALK_ROBOT_SECRET`

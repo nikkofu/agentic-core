@@ -4,7 +4,7 @@
 
 **Goal:** Add China-region DingTalk gateway support with both enterprise app HTTP callbacks and group robot webhook sending, while preserving existing `wecom` and `feishu` behavior and limiting shared-layer changes to DingTalk-specific configuration and wiring.
 
-**Architecture:** Reuse the already-extended shared `gateway.StandardMessage` and `SessionRouter`, add a new `internal/gateway/dingtalk` package split into `app` and `robot` responsibilities, and wire both adapters into `cmd/gateway`. Use the official DingTalk Go SDK package family `github.com/alibabacloud-go/dingtalk` for app-side OpenAPI calls, keep callback verification/mapping in lightweight in-repo handlers, and implement robot webhook sending with stdlib HTTP/signing helpers.
+**Architecture:** Reuse the already-extended shared `gateway.StandardMessage` and `SessionRouter`, add a new `internal/gateway/dingtalk` package split into `app` and `robot` responsibilities, and wire both adapters into `cmd/gateway`. Use the official DingTalk Go SDK package family `github.com/alibabacloud-go/dingtalk` for app-side token and interactive-card APIs, supplement ordinary conversation/work-notice/media flows with OAPI wrappers, keep callback verification/mapping in lightweight in-repo handlers, and implement robot webhook sending with stdlib HTTP/signing helpers.
 
 **Tech Stack:** Go 1.25.x, existing Redis transport, existing gateway queue model, official DingTalk Go SDK modules under `github.com/alibabacloud-go/dingtalk`, stdlib `net/http` / `crypto/hmac` / `encoding/json`, existing `go test`.
 
@@ -34,12 +34,10 @@
   - Hold callback signature / decrypt helpers and app-client-facing helper interfaces.
 - `internal/gateway/dingtalk/app_mapper.go`
   - Convert DingTalk event callbacks and card action callbacks into `gateway.ChannelRequest`.
-- `internal/gateway/dingtalk/app_handler.go`
-  - Handle event callback and card callback HTTP requests.
 - `internal/gateway/dingtalk/app_adapter.go`
-  - Provide `gateway.RichAdapter` behavior for `dingtalk_app`.
+  - Provide `gateway.RichAdapter` behavior for `dingtalk_app` and host event/card callback HTTP handlers.
 - `internal/gateway/dingtalk/app_client.go`
-  - Wrap the official DingTalk SDK for token, send, and upload operations.
+  - Wrap the official DingTalk SDK for token / interactive-card operations plus OAPI send/upload flows.
 - `internal/gateway/dingtalk/robot_payload.go`
   - Build webhook payloads from `gateway.ChannelResponse`.
 - `internal/gateway/dingtalk/robot_client.go`
@@ -183,7 +181,7 @@ Expected: PASS
 - Create: `internal/gateway/dingtalk/callback_types.go`
 - Create: `internal/gateway/dingtalk/app_support.go`
 - Create: `internal/gateway/dingtalk/app_mapper.go`
-- Create: `internal/gateway/dingtalk/app_handler.go`
+- Modify: `internal/gateway/dingtalk/app_adapter.go`
 - Test: `internal/gateway/dingtalk/app_handler_test.go`
 
 - [ ] **Step 1: Write the failing app handler tests**
@@ -317,6 +315,7 @@ Document:
 - robot webhook examples
 - unified ingress example for `channel_name=dingtalk_robot`
 - local verification steps
+- encrypted callback verification steps
 
 - [ ] **Step 2: Write the runbook and index updates**
 

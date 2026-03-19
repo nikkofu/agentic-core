@@ -15,6 +15,8 @@ const (
 	defaultWeComCallbackPath         = "/callbacks/wecom"
 	defaultFeishuAppEventCallback    = "/callbacks/feishu/events"
 	defaultFeishuAppCardCallbackPath = "/callbacks/feishu/cards"
+	defaultDingTalkAppEventCallback  = "/callbacks/dingtalk/events"
+	defaultDingTalkAppCardCallback   = "/callbacks/dingtalk/cards"
 )
 
 type Config struct {
@@ -25,6 +27,8 @@ type Config struct {
 	WeComRobot    WeComRobotConfig
 	FeishuApp     FeishuAppConfig
 	FeishuBot     FeishuBotConfig
+	DingTalkApp   DingTalkAppConfig
+	DingTalkRobot DingTalkRobotConfig
 }
 
 type WeComConfig struct {
@@ -55,6 +59,28 @@ type FeishuAppConfig struct {
 }
 
 type FeishuBotConfig struct {
+	Enabled    bool
+	WebhookURL string
+	Secret     string
+}
+
+type DingTalkAppConfig struct {
+	Enabled              bool
+	ClientID             string
+	ClientSecret         string
+	AgentID              int64
+	EventCallbackPath    string
+	CardCallbackPath     string
+	APIBaseURL           string
+	OAPIBaseURL          string
+	Token                string
+	AESKey               string
+	MediaDir             string
+	CardTemplateID       string
+	CardCallbackRouteKey string
+}
+
+type DingTalkRobotConfig struct {
 	Enabled    bool
 	WebhookURL string
 	Secret     string
@@ -94,6 +120,26 @@ func ParseConfig(args []string) (Config, error) {
 			WebhookURL: strings.TrimSpace(os.Getenv("FEISHU_BOT_WEBHOOK_URL")),
 			Secret:     strings.TrimSpace(os.Getenv("FEISHU_BOT_SECRET")),
 		},
+		DingTalkApp: DingTalkAppConfig{
+			Enabled:              getenvBool("DINGTALK_APP_ENABLED"),
+			ClientID:             strings.TrimSpace(os.Getenv("DINGTALK_APP_CLIENT_ID")),
+			ClientSecret:         strings.TrimSpace(os.Getenv("DINGTALK_APP_CLIENT_SECRET")),
+			AgentID:              getenvInt64("DINGTALK_APP_AGENT_ID"),
+			EventCallbackPath:    getenvOrDefault("DINGTALK_APP_EVENT_CALLBACK_PATH", defaultDingTalkAppEventCallback),
+			CardCallbackPath:     getenvOrDefault("DINGTALK_APP_CARD_CALLBACK_PATH", defaultDingTalkAppCardCallback),
+			APIBaseURL:           strings.TrimSpace(os.Getenv("DINGTALK_APP_API_BASE_URL")),
+			OAPIBaseURL:          strings.TrimSpace(os.Getenv("DINGTALK_APP_OAPI_BASE_URL")),
+			Token:                strings.TrimSpace(os.Getenv("DINGTALK_APP_TOKEN")),
+			AESKey:               strings.TrimSpace(os.Getenv("DINGTALK_APP_AES_KEY")),
+			MediaDir:             strings.TrimSpace(os.Getenv("DINGTALK_APP_MEDIA_DIR")),
+			CardTemplateID:       strings.TrimSpace(os.Getenv("DINGTALK_APP_CARD_TEMPLATE_ID")),
+			CardCallbackRouteKey: strings.TrimSpace(os.Getenv("DINGTALK_APP_CARD_CALLBACK_ROUTE_KEY")),
+		},
+		DingTalkRobot: DingTalkRobotConfig{
+			Enabled:    getenvBool("DINGTALK_ROBOT_ENABLED"),
+			WebhookURL: strings.TrimSpace(os.Getenv("DINGTALK_ROBOT_WEBHOOK_URL")),
+			Secret:     strings.TrimSpace(os.Getenv("DINGTALK_ROBOT_SECRET")),
+		},
 	}
 
 	fs := flag.NewFlagSet("gateway", flag.ContinueOnError)
@@ -121,6 +167,22 @@ func ParseConfig(args []string) (Config, error) {
 	fs.BoolVar(&cfg.FeishuBot.Enabled, "feishu-bot-enabled", cfg.FeishuBot.Enabled, "enable feishu bot adapter")
 	fs.StringVar(&cfg.FeishuBot.WebhookURL, "feishu-bot-webhook-url", cfg.FeishuBot.WebhookURL, "feishu bot webhook url")
 	fs.StringVar(&cfg.FeishuBot.Secret, "feishu-bot-secret", cfg.FeishuBot.Secret, "feishu bot secret")
+	fs.BoolVar(&cfg.DingTalkApp.Enabled, "dingtalk-app-enabled", cfg.DingTalkApp.Enabled, "enable dingtalk app adapter")
+	fs.StringVar(&cfg.DingTalkApp.ClientID, "dingtalk-app-client-id", cfg.DingTalkApp.ClientID, "dingtalk app client id")
+	fs.StringVar(&cfg.DingTalkApp.ClientSecret, "dingtalk-app-client-secret", cfg.DingTalkApp.ClientSecret, "dingtalk app client secret")
+	fs.Int64Var(&cfg.DingTalkApp.AgentID, "dingtalk-app-agent-id", cfg.DingTalkApp.AgentID, "dingtalk app agent id")
+	fs.StringVar(&cfg.DingTalkApp.EventCallbackPath, "dingtalk-app-event-callback-path", cfg.DingTalkApp.EventCallbackPath, "dingtalk app event callback path")
+	fs.StringVar(&cfg.DingTalkApp.CardCallbackPath, "dingtalk-app-card-callback-path", cfg.DingTalkApp.CardCallbackPath, "dingtalk app card callback path")
+	fs.StringVar(&cfg.DingTalkApp.APIBaseURL, "dingtalk-app-api-base-url", cfg.DingTalkApp.APIBaseURL, "dingtalk app api base url")
+	fs.StringVar(&cfg.DingTalkApp.OAPIBaseURL, "dingtalk-app-oapi-base-url", cfg.DingTalkApp.OAPIBaseURL, "dingtalk app oapi base url")
+	fs.StringVar(&cfg.DingTalkApp.Token, "dingtalk-app-token", cfg.DingTalkApp.Token, "dingtalk app callback token")
+	fs.StringVar(&cfg.DingTalkApp.AESKey, "dingtalk-app-aes-key", cfg.DingTalkApp.AESKey, "dingtalk app callback aes key")
+	fs.StringVar(&cfg.DingTalkApp.MediaDir, "dingtalk-app-media-dir", cfg.DingTalkApp.MediaDir, "dingtalk app media dir")
+	fs.StringVar(&cfg.DingTalkApp.CardTemplateID, "dingtalk-app-card-template-id", cfg.DingTalkApp.CardTemplateID, "default dingtalk interactive card template id")
+	fs.StringVar(&cfg.DingTalkApp.CardCallbackRouteKey, "dingtalk-app-card-callback-route-key", cfg.DingTalkApp.CardCallbackRouteKey, "default dingtalk interactive card callback route key")
+	fs.BoolVar(&cfg.DingTalkRobot.Enabled, "dingtalk-robot-enabled", cfg.DingTalkRobot.Enabled, "enable dingtalk robot adapter")
+	fs.StringVar(&cfg.DingTalkRobot.WebhookURL, "dingtalk-robot-webhook-url", cfg.DingTalkRobot.WebhookURL, "dingtalk robot webhook url")
+	fs.StringVar(&cfg.DingTalkRobot.Secret, "dingtalk-robot-secret", cfg.DingTalkRobot.Secret, "dingtalk robot secret")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -142,7 +204,9 @@ func (c Config) Validate() error {
 	hasRobot := c.WeComRobot.Enabled()
 	hasFeishuApp := c.FeishuApp.IsEnabled()
 	hasFeishuBot := c.FeishuBot.IsEnabled()
-	if !hasApp && !hasRobot && !hasFeishuApp && !hasFeishuBot {
+	hasDingTalkApp := c.DingTalkApp.IsEnabled()
+	hasDingTalkRobot := c.DingTalkRobot.IsEnabled()
+	if !hasApp && !hasRobot && !hasFeishuApp && !hasFeishuBot && !hasDingTalkApp && !hasDingTalkRobot {
 		return fmt.Errorf("at least one gateway channel must be configured")
 	}
 	if hasApp {
@@ -157,6 +221,16 @@ func (c Config) Validate() error {
 	}
 	if hasFeishuBot {
 		if err := c.FeishuBot.Validate(); err != nil {
+			return err
+		}
+	}
+	if hasDingTalkApp {
+		if err := c.DingTalkApp.Validate(); err != nil {
+			return err
+		}
+	}
+	if hasDingTalkRobot {
+		if err := c.DingTalkRobot.Validate(); err != nil {
 			return err
 		}
 	}
@@ -237,6 +311,51 @@ func (c FeishuBotConfig) IsEnabled() bool {
 func (c FeishuBotConfig) Validate() error {
 	if strings.TrimSpace(c.WebhookURL) == "" {
 		return fmt.Errorf("feishu bot webhook url is required")
+	}
+	return nil
+}
+
+func (c DingTalkAppConfig) IsEnabled() bool {
+	return c.Enabled ||
+		strings.TrimSpace(c.ClientID) != "" ||
+		strings.TrimSpace(c.ClientSecret) != "" ||
+		c.AgentID > 0 ||
+		strings.TrimSpace(c.Token) != "" ||
+		strings.TrimSpace(c.AESKey) != ""
+}
+
+func (c DingTalkAppConfig) Validate() error {
+	if strings.TrimSpace(c.ClientID) == "" {
+		return fmt.Errorf("dingtalk app client id is required")
+	}
+	if strings.TrimSpace(c.ClientSecret) == "" {
+		return fmt.Errorf("dingtalk app client secret is required")
+	}
+	if c.AgentID <= 0 {
+		return fmt.Errorf("dingtalk app agent id must be positive")
+	}
+	if strings.TrimSpace(c.Token) == "" {
+		return fmt.Errorf("dingtalk app token is required")
+	}
+	if strings.TrimSpace(c.AESKey) == "" {
+		return fmt.Errorf("dingtalk app aes key is required")
+	}
+	if strings.TrimSpace(c.EventCallbackPath) == "" {
+		return fmt.Errorf("dingtalk app event callback path is required")
+	}
+	if strings.TrimSpace(c.CardCallbackPath) == "" {
+		return fmt.Errorf("dingtalk app card callback path is required")
+	}
+	return nil
+}
+
+func (c DingTalkRobotConfig) IsEnabled() bool {
+	return c.Enabled || strings.TrimSpace(c.WebhookURL) != ""
+}
+
+func (c DingTalkRobotConfig) Validate() error {
+	if strings.TrimSpace(c.WebhookURL) == "" {
+		return fmt.Errorf("dingtalk robot webhook url is required")
 	}
 	return nil
 }

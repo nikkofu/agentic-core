@@ -119,3 +119,7 @@ func (r *RedisTransport) Subscribe(ctx context.Context, topic string) (<-chan Me
 
 	return ch, nil
 }
+
+func (r *RedisTransport) Consume(ctx context.Context, topic string) (<-chan Message, error) {
+	return r.Subscribe(ctx, topic)
+}
