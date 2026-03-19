@@ -13,6 +13,7 @@ import (
 	"agentic-core/internal/bus"
 	"agentic-core/internal/llm"
 	"agentic-core/internal/logging"
+	"agentic-core/internal/memory"
 	"agentic-core/internal/process"
 	"agentic-core/internal/session"
 	"agentic-core/internal/skill"
@@ -41,11 +42,15 @@ type Subagent struct {
 	queue     bus.TaskQueue
 	events    bus.EventBus
 	heartbeat bus.HeartbeatBus
-	runtime   *llm.Runtime
+	runtime   runtimeExecutor
 	history   session.HistoryStore
 	resolver  *llm.ModelResolver
 	auditor   *process.Auditor
 	logger    *slog.Logger
+}
+
+type runtimeExecutor interface {
+	Run(ctx context.Context, req llm.InferenceRequest, fanout *llm.Fanout) (llm.FinalResult, error)
 }
 
 func ParseConfig(args []string) (Config, error) {
@@ -249,7 +254,7 @@ func (s *Subagent) Run(ctx context.Context) error {
 		}
 
 		// 发送成功结果
-		s.sendResult(msg, "success", result.Content, "")
+		s.sendResult(msg, memory.TaskStatusSuccess, result.Content, "")
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -311,13 +316,14 @@ func (s *Subagent) sendResult(msg bus.Message, status, output, err string) {
 }
 
 func runtimeTaskResultStatus(runtimeStatus string, err error) string {
+	normalized := memory.NormalizeTaskStatus(runtimeStatus)
 	if runtimeStatus != "" {
-		return runtimeStatus
+		return normalized
 	}
 	if err != nil {
-		return "error"
+		return memory.TaskStatusFailed
 	}
-	return "success"
+	return memory.TaskStatusSuccess
 }
 
 func main() {
