@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -161,7 +165,10 @@ func newSignedApprovalWebhookRequest(t *testing.T, secret string, decision llm.A
 		t.Fatalf("marshal approval decision failed: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/approval", strings.NewReader(string(body)))
+	req, err := http.NewRequest(http.MethodPost, "/approval", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("create approval webhook request failed: %v", err)
+	}
 	ts := time.Now().Unix()
 	nonce := fmt.Sprintf("nonce-%d", time.Now().UnixNano())
 	req.Header.Set(skill.HeaderTimestamp, fmt.Sprintf("%d", ts))
@@ -1161,6 +1168,189 @@ func TestServeHTTPCompletesWriteToolAfterApprovalWebhook(t *testing.T) {
 		case <-auditDeadline:
 			t.Fatalf("expected approval audit for task %s", taskID)
 		}
+	}
+}
+
+func TestServeHTTPWriteToolApprovalWebhookSmokeOverLocalHTTP(t *testing.T) {
+	cfg := AppConfig{
+		SQLiteDSN:      "file:orchestrator-webhook-approval-smoke?mode=memory&cache=shared",
+		RedisAddr:      "skip",
+		MQTTBroker:     "skip",
+		ApprovalSecret: "test-secret",
+	}
+	app, err := NewApp(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new app failed: %v", err)
+	}
+
+	provider := &orchestratorScriptedProvider{
+		predictOutputs: []string{
+			`{"think":"need approval","call_skill":{"id":"call-1","name":"write_test_note","arguments":{"note":"hello"},"is_write_operation":true}}`,
+			`{"think":"done","final":"Write approved and executed."}`,
+		},
+	}
+	app.resolver.Register("test-provider", provider)
+	app.resolver.RegisterRoute(llm.StaticRoute{
+		Alias:         "test-model",
+		Provider:      "test-provider",
+		UpstreamModel: "test-model-upstream",
+	})
+	registry := skill.NewRegistry()
+	registry.Register(&orchestratorTestWriteSkill{})
+	app.gatewayRegistry = registry
+
+	chunks, err := app.events.Subscribe(context.Background(), "chunks.*")
+	if err != nil {
+		t.Fatalf("subscribe chunks failed: %v", err)
+	}
+
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		if errors.Is(err, syscall.EPERM) {
+			t.Skipf("loopback binding blocked by sandbox: %v", err)
+		}
+		var opErr *net.OpError
+		if errors.As(err, &opErr) && errors.Is(opErr.Err, syscall.EPERM) {
+			t.Skipf("loopback binding blocked by sandbox: %v", err)
+		}
+		t.Fatalf("listen on loopback failed: %v", err)
+	}
+	defer listener.Close()
+
+	server := &http.Server{Handler: app}
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- server.Serve(listener)
+	}()
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			t.Fatalf("shutdown http server failed: %v", err)
+		}
+		if err := <-serverDone; err != nil && err != http.ErrServerClosed {
+			t.Fatalf("http server exited with error: %v", err)
+		}
+	}()
+
+	baseURL := "http://" + listener.Addr().String()
+	client := &http.Client{Timeout: 2 * time.Second}
+	body := `{
+		"model":"test-model",
+		"messages":[{"role":"user","content":"persist this note"}],
+		"tools":[{"type":"function","function":{"name":"write_test_note"}}],
+		"tool_choice":"required"
+	}`
+
+	type chatResult struct {
+		statusCode int
+		body       []byte
+		err        error
+	}
+	resultCh := make(chan chatResult, 1)
+	go func() {
+		req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/chat/completions", strings.NewReader(body))
+		if err != nil {
+			resultCh <- chatResult{err: err}
+			return
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			resultCh <- chatResult{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		respBody, err := io.ReadAll(resp.Body)
+		resultCh <- chatResult{statusCode: resp.StatusCode, body: respBody, err: err}
+	}()
+
+	var (
+		taskID string
+		events []string
+	)
+	deadline := time.After(3 * time.Second)
+	for len(events) < 4 {
+		select {
+		case msg := <-chunks:
+			var chunk llm.StreamChunk
+			if err := json.Unmarshal(msg.Payload, &chunk); err != nil {
+				t.Fatalf("unmarshal chunk failed: %v", err)
+			}
+			taskID = chunk.TaskID
+			events = append(events, chunk.Event)
+			if chunk.Event != "waiting_approval" {
+				continue
+			}
+
+			var approvalReq llm.ApprovalRequest
+			if err := json.Unmarshal(chunk.Data, &approvalReq); err != nil {
+				t.Fatalf("unmarshal approval request failed: %v", err)
+			}
+			approvalDecision := llm.ApprovalDecision{
+				TraceID:     chunk.TraceID,
+				TaskID:      chunk.TaskID,
+				ToolCallID:  approvalReq.ToolCallID,
+				Approved:    true,
+				Reviewer:    "alice",
+				Reason:      "approved",
+				DecidedAtMs: time.Now().UnixMilli(),
+			}
+			approvalReqHTTP := newSignedApprovalWebhookRequest(t, cfg.ApprovalSecret, approvalDecision)
+			approvalReqHTTP.URL.Scheme = "http"
+			approvalReqHTTP.URL.Host = listener.Addr().String()
+			resp, err := client.Do(approvalReqHTTP)
+			if err != nil {
+				t.Fatalf("post approval webhook failed: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("expected 200 approval webhook response, got %d", resp.StatusCode)
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for approval flow chunks, got %v", events)
+		}
+	}
+
+	result := <-resultCh
+	if result.err != nil {
+		t.Fatalf("chat completion request failed: %v", result.err)
+	}
+	if result.statusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", result.statusCode, string(result.body))
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result.body, &payload); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if payload["id"] != taskID {
+		t.Fatalf("expected response id %s, got %+v", taskID, payload["id"])
+	}
+	choices, ok := payload["choices"].([]any)
+	if !ok || len(choices) != 1 {
+		t.Fatalf("unexpected choices payload: %+v", payload)
+	}
+	message, ok := choices[0].(map[string]any)["message"].(map[string]any)
+	if !ok || message["content"] != "Write approved and executed." {
+		t.Fatalf("unexpected final response payload: %+v", payload)
+	}
+
+	expected := []string{"tool_call", "waiting_approval", "tool_result", "final"}
+	for idx, event := range expected {
+		if events[idx] != event {
+			t.Fatalf("expected events %v, got %v", expected, events)
+		}
+	}
+	if provider.predictCalls != 2 {
+		t.Fatalf("expected provider called twice, got %d", provider.predictCalls)
+	}
+
+	state, err := app.taskStore.Get(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get task state failed: %v", err)
+	}
+	if state.Status != "success" {
+		t.Fatalf("expected success task state, got %+v", state)
 	}
 }
 

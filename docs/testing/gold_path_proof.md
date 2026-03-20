@@ -1,7 +1,7 @@
 # Gold-Path Proof Guide
 
 ## What This Proves
-This guide ties the Phase A runtime-governance proof buckets to the existing tests and commands that were already run successfully in this worktree. Every bucket below is anchored to concrete test files, line numbers, and names, and the commands listed in the Exact Commands section are the ones that Task 4's script runner will reissue in this order.
+This guide ties the Phase A runtime-governance proof buckets to the concrete tests and commands that anchor the proof in this worktree. Every bucket below is anchored to test files, line numbers, and names, and the commands listed in the Exact Commands section are the ones that `scripts/proof_gold_path.sh` reissues in this order.
 
 ## Proof Buckets
 
@@ -9,7 +9,7 @@ This guide ties the Phase A runtime-governance proof buckets to the existing tes
   - Tests:
     - `internal/gateway/chat_completions_handler_test.go:277` — `TestChatCompletionsHandlerExecutesWriteToolAfterApproval`
     - `internal/gateway/chat_completions_handler_test.go:442` — `TestChatCompletionsHandlerStreamsWriteToolAfterApproval`
-    - `cmd/orchestrator/main_test.go:1014` — `TestServeHTTPCompletesWriteToolAfterApprovalWebhook`
+    - `cmd/orchestrator/main_test.go:1021` — `TestServeHTTPCompletesWriteToolAfterApprovalWebhook`
   - Purpose: demonstrates that the gateway handler executes/streams the write tool and that the orchestrator HTTP stack completes the same write tool after receiving an approval webhook.
 - **approval-reject**
   - Tests:
@@ -18,7 +18,7 @@ This guide ties the Phase A runtime-governance proof buckets to the existing tes
 - **approval-timeout-late-decision**
   - Tests:
     - `internal/gateway/chat_completions_handler_test.go:714` — `TestChatCompletionsHandlerTimeoutDuringApprovalPersistsTimeoutAndIgnoresLateDecision`
-    - `cmd/orchestrator/main_test.go:1167` — `TestServeHTTPLateApprovalWebhookDoesNotChangeTimedOutWriteToolState`
+    - `cmd/orchestrator/main_test.go:1357` — `TestServeHTTPLateApprovalWebhookDoesNotChangeTimedOutWriteToolState`
   - Purpose: confirms gateway timeouts persist and ignore late decisions while the orchestrator HTTP stack preserves the timed-out write tool state against late approval notifications.
 - **audit-replay**
   - Tests:
@@ -39,15 +39,15 @@ This guide ties the Phase A runtime-governance proof buckets to the existing tes
   - Purpose: validates router decisions, payload enqueueing, and both rich message and direct send routing.
 - **smoke**
   - Tests:
-    - `cmd/orchestrator/main_test.go:1014` — `TestServeHTTPCompletesWriteToolAfterApprovalWebhook`
-  - Purpose: ensures the orchestrator HTTP stack completes the write tool after an approval webhook, crossing at least one real HTTP boundary rather than merely renaming an in-memory unit test. This intentionally reuses the orchestrator proof already listed under `approval-success` because `smoke` is the designated real-boundary slice.
+    - `cmd/orchestrator/main_test.go:1174` — `TestServeHTTPWriteToolApprovalWebhookSmokeOverLocalHTTP`
+  - Purpose: ensures the orchestrator approval/write-tool success path crosses a distinct scripted local HTTP boundary over loopback, with the chat completion request and approval webhook both posted through a real HTTP server.
 - **all**
   - Tests: the ordered composition of the bucket commands listed below.
   - Purpose: proves the entire gold path stays green when the buckets run sequentially.
 
 ## Exact Commands
 
-Each command below was verified manually in this worktree and is the exact call Task 4's runner will dispatch for its bucket.
+Each command below is the exact call `scripts/proof_gold_path.sh` dispatches for its bucket. The `smoke` command requires loopback bind permission; in sandbox-constrained runs it may skip instead of exercising the socket boundary.
 
 - `approval-success`:
   - `go test ./internal/gateway -run 'Test(ChatCompletionsHandlerExecutesWriteToolAfterApproval|ChatCompletionsHandlerStreamsWriteToolAfterApproval)' -count=1`
@@ -59,8 +59,8 @@ Each command below was verified manually in this worktree and is the exact call 
 - `audit-replay`: `go test ./cmd/orchestrator -run 'TestSingleTaskReplayAuditPreservesTerminalResultStatus' -count=1`
 - `sse-abort`: `go test ./internal/gateway -run 'Test(SenderDisconnectDoesNotEmitDoneFrame|SenderPublishesAbortedStreamAuditOnDisconnect|SenderPublishesDoneStatusAuditWhenFinalChunkDisconnects)' -count=1`
 - `gateway-route`: `go test ./internal/gateway -run 'Test(HandleIncomingTracksTaskRouteAndEnqueuesUnifiedPayload|StartStreamListenerRoutesRichMessageToRegisteredAdapter|StartStreamListenerDirectSendUsesExplicitChannelMessage|StartStreamListenerDirectSendOverridesRouteBinding)' -count=1`
-- `smoke`: `go test ./cmd/orchestrator -run 'TestServeHTTPCompletesWriteToolAfterApprovalWebhook' -count=1`
-- `all`: script runner Task 4 will execute the above bucket commands in this order to compose the full gold-path proof.
+- `smoke`: `go test ./cmd/orchestrator -run 'TestServeHTTPWriteToolApprovalWebhookSmokeOverLocalHTTP' -count=1`
+- `all`: `scripts/proof_gold_path.sh all` executes the above bucket commands in this order to compose the full gold-path proof.
 
 ## Coverage Boundaries
 
@@ -83,14 +83,14 @@ Each command below was verified manually in this worktree and is the exact call 
   - Proves: routing of new tasks, adapter notifications, and direct-send overrides behave as expected.
   - Does not prove: completion of write tools or audit state transitions beyond routing.
 - **smoke**
-  - Proves: the orchestrator HTTP path completes a write tool after an approval webhook across a real boundary; it cannot be satisfied by only renaming an in-memory unit test.
+  - Proves: the orchestrator HTTP path completes a write tool after an approval webhook across a real loopback HTTP server, distinct from the recorder-based approval success proof.
   - Does not prove: every webhook variant or SSE detail handled by the targeted buckets.
 - **all**
   - Proves: composing the bucket commands keeps the full gold path green.
-  - Does not prove: that the Task 4 runner itself has shipped (that work is deferred to the script implementation).
+  - Does not prove: end-to-end UI, load, or resilience scenarios beyond the scripted proof buckets.
 
 ## What Is Still Deferred
 
-- Task 4 needs to implement and run the script that dispatches the bucket commands in the order documented above.
+- `scripts/proof_gold_path.sh` is the landed runner for the documented buckets; keep this guide aligned with its commands whenever a bucket changes.
 - End-to-end UI, load, and resilience scenarios remain out of scope for this Phase A proof; add new buckets and documentation if they become required.
 - Any future bucket additions must be documented here before the script runner includes them so the gold-path spec stays aligned with the approved backlog.

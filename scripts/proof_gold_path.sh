@@ -72,7 +72,7 @@ gateway_route_bucket() {
 
 smoke_bucket() {
   run_step smoke \
-    "go test ./cmd/orchestrator -run 'TestServeHTTPCompletesWriteToolAfterApprovalWebhook' -count=1"
+    "go test ./cmd/orchestrator -run 'TestServeHTTPWriteToolApprovalWebhookSmokeOverLocalHTTP' -count=1"
 }
 
 run_all_buckets() {

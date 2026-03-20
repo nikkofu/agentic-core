@@ -12,7 +12,8 @@ Per the runtime-governance reset references (see `docs/superpowers/plans/2026-03
 
 ### Event Bus Semantics
 
-- Broadcast events such as `chunks.<TaskID>` and `system.health`/heartbeat channels remain on the event bus (`Publish`/`Subscribe`), honoring the split emphasized in the reset plan (Workstream 1). These topics use `bus.Message` envelopes with contributors like orchestrator, subagent, or gateway sender acting as publishers.
+- Broadcast events such as `chunks.<TaskID>` and `system.health` remain on the event bus (`Publish`/`Subscribe`), honoring the split emphasized in the reset plan (Workstream 1). These topics use `bus.Message` envelopes with contributors like orchestrator, subagent, or gateway sender acting as publishers.
+- Heartbeat liveness is separate from the event bus. `HeartbeatBus` publishes agent status through its own interface (`PublishHeartbeat`), and the MQTT-backed implementation writes to topics such as `agents/<agentID>/heartbeat` without turning those heartbeat writes into `EventBus` topics.
 - `approvals` is the shared topic that approval webhook handlers publish decisions onto (see `cmd/orchestrator/main.go`), and `internal/skill.ApprovalGate` subscribes to those decisions. Approval requests surface as `waiting_approval` stream chunks on `chunks.<TaskID>` rather than being queued onto `approvals`.
 - `chunks.<id>` topics stream runtime progress events emitted inside the subagent (`cmd/subagent/main.go`) or gateway sender (`internal/gateway/sender.go`). The sender subscribes to `chunks.*`, fans those messages to SSE clients, and drives audit logging for each chunk event (`llm.StreamChunk`).
 - Audit events publish either to `audit` (when no `TaskID` is associated) or `audit.<TaskID>` (when task-scoped), as implemented in `internal/process/audit.go`. Each `llm.AuditEvent` chooses exactly one topic before being logged so that listeners can subscribe to the desired scope without duplicate events.
@@ -21,7 +22,7 @@ Per the runtime-governance reset references (see `docs/superpowers/plans/2026-03
 
 - Queue topics: always use `tasks`, `task.<id>`, and `task_results` for task delivery and final consumption. No other module should treat `task_results` as an event stream.
 - Event topics: use descriptive names such as `approvals`, `chunks.<TaskID>`, and `system.health`. Patterns may use wildcards only when subscribing (e.g., `chunks.*`).
-- `tasks` and `task.<id>` messages embed `TaskID` and lightweight metadata, while `bus.TaskResult` enforces statuses like `success`, `failed`, `timeout`, `cancelled`, or `rejected`. The orchestrator normalizes those results using `memory.NormalizeTaskStatus` before reconciling workflow nodes.
+- Task identity on queue and event messages is carried by the combination of `MessageID`, topic naming such as `task.<id>` / `chunks.<TaskID>` / `audit.<TaskID>`, and task-scoped payload fields where applicable. `bus.TaskResult` also carries task status values such as `success`, `failed`, `timeout`, `cancelled`, or `rejected`, which the orchestrator normalizes with `memory.NormalizeTaskStatus` before reconciling workflow nodes.
 
 ## Observability & Audit Anchors
 
