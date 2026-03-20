@@ -16,13 +16,12 @@ type ExecProcessManager struct {
 	tracked map[int]struct{}
 }
 
-func (m *ExecProcessManager) SpawnAgent(ctx context.Context, agentType string, taskID string, extraArgs ...string) (pid int, err error) {
+func (m *ExecProcessManager) SpawnAgent(ctx context.Context, agentType string, taskID string) (pid int, err error) {
 	if m.BinaryPath == "" {
 		return 0, errors.New("binary path is required")
 	}
 
 	args := []string{"--agent-type", agentType, "--task-id", taskID}
-	args = append(args, extraArgs...)
 	cmd := exec.CommandContext(ctx, m.BinaryPath, args...)
 	if err := cmd.Start(); err != nil {
 		return 0, err
