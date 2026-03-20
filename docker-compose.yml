@@ -53,7 +53,7 @@ services:
     command: minio server /minio_data --console-address ":9001"
     ports:
       - "${MINIO_API_PORT:-19000}:9000"
-      - "${MINIO_CONSOLE_PORT:-19001}:9001"
+      - "${MINIO_CONSOLE_PORT:-19002}:9001"
     volumes:
       - minio-data:/minio_data
     restart: unless-stopped
