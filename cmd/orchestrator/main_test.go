@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"syscall"
 	"testing"
@@ -1172,6 +1173,10 @@ func TestServeHTTPCompletesWriteToolAfterApprovalWebhook(t *testing.T) {
 }
 
 func TestServeHTTPWriteToolApprovalWebhookSmokeOverLocalHTTP(t *testing.T) {
+	if os.Getenv("AGENTIC_CORE_FORCE_SMOKE_SKIP") == "1" {
+		t.Skip("forced smoke skip for proof runner validation")
+	}
+
 	cfg := AppConfig{
 		SQLiteDSN:      "file:orchestrator-webhook-approval-smoke?mode=memory&cache=shared",
 		RedisAddr:      "skip",

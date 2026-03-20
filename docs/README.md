@@ -9,6 +9,11 @@
 - [docs/testing/gold_path_proof.md](./testing/gold_path_proof.md)：当前的 Phase A gold-path proof guide，列出 proof buckets、对应测试与 exact commands，是验证 runtime governance proof 的主入口。
 - [scripts/proof_gold_path.sh](../scripts/proof_gold_path.sh)：可执行的 proof runner，按 guide 中定义的 bucket 顺序运行对应命令。
 
+## 当前运行注记
+- [docs/architecture/process_scheduling.md](./architecture/process_scheduling.md)：当前 runtime 的进程调度边界、orchestrator/subagent 分工与已知限制。
+- [docs/protocol/internal_bus.md](./protocol/internal_bus.md)：当前 queue/event bus 语义、topic 命名与审批/审计/chunk 事件边界。
+- [docs/journal/README.md](./journal/README.md)：当前 journal 目录的定位说明，以及后续历史记录的承接位置。
+
 ## 当前状态矩阵
 状态矩阵把项目能力划为 implemented / partial / deferred，以便在文档中保持一致：
 

@@ -23,6 +23,8 @@ Command outputs show readable headers for each bucket and stop on failure.
 EOF
 }
 
+SMOKE_TEST_NAME="TestServeHTTPWriteToolApprovalWebhookSmokeOverLocalHTTP"
+
 run_step() {
   local bucket="$1"
   shift
@@ -35,6 +37,31 @@ run_step() {
       exit 1
     fi
   done
+  echo "PASS: $bucket"
+}
+
+run_required_pass_test() {
+  local bucket="$1"
+  local test_name="$2"
+  local cmd="$3"
+  local output
+
+  echo "==> bucket: $bucket"
+  echo "--> $cmd"
+  if ! output=$(bash -lc "$cmd" 2>&1); then
+    printf '%s\n' "$output"
+    echo "FAIL: $bucket"
+    exit 1
+  fi
+  printf '%s\n' "$output"
+  if grep -Fq -- "--- SKIP: $test_name" <<<"$output"; then
+    echo "FAIL: $bucket (required smoke test skipped)"
+    exit 1
+  fi
+  if ! grep -Fq -- "--- PASS: $test_name" <<<"$output"; then
+    echo "FAIL: $bucket (required smoke test did not report PASS)"
+    exit 1
+  fi
   echo "PASS: $bucket"
 }
 
@@ -71,8 +98,8 @@ gateway_route_bucket() {
 }
 
 smoke_bucket() {
-  run_step smoke \
-    "go test ./cmd/orchestrator -run 'TestServeHTTPWriteToolApprovalWebhookSmokeOverLocalHTTP' -count=1"
+  run_required_pass_test smoke "$SMOKE_TEST_NAME" \
+    "go test ./cmd/orchestrator -run '^${SMOKE_TEST_NAME}$' -count=1 -v"
 }
 
 run_all_buckets() {

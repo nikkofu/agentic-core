@@ -9,7 +9,7 @@ This guide ties the Phase A runtime-governance proof buckets to the concrete tes
   - Tests:
     - `internal/gateway/chat_completions_handler_test.go:277` — `TestChatCompletionsHandlerExecutesWriteToolAfterApproval`
     - `internal/gateway/chat_completions_handler_test.go:442` — `TestChatCompletionsHandlerStreamsWriteToolAfterApproval`
-    - `cmd/orchestrator/main_test.go:1021` — `TestServeHTTPCompletesWriteToolAfterApprovalWebhook`
+    - `cmd/orchestrator/main_test.go:1022` — `TestServeHTTPCompletesWriteToolAfterApprovalWebhook`
   - Purpose: demonstrates that the gateway handler executes/streams the write tool and that the orchestrator HTTP stack completes the same write tool after receiving an approval webhook.
 - **approval-reject**
   - Tests:
@@ -18,11 +18,11 @@ This guide ties the Phase A runtime-governance proof buckets to the concrete tes
 - **approval-timeout-late-decision**
   - Tests:
     - `internal/gateway/chat_completions_handler_test.go:714` — `TestChatCompletionsHandlerTimeoutDuringApprovalPersistsTimeoutAndIgnoresLateDecision`
-    - `cmd/orchestrator/main_test.go:1357` — `TestServeHTTPLateApprovalWebhookDoesNotChangeTimedOutWriteToolState`
+    - `cmd/orchestrator/main_test.go:1362` — `TestServeHTTPLateApprovalWebhookDoesNotChangeTimedOutWriteToolState`
   - Purpose: confirms gateway timeouts persist and ignore late decisions while the orchestrator HTTP stack preserves the timed-out write tool state against late approval notifications.
 - **audit-replay**
   - Tests:
-    - `cmd/orchestrator/main_test.go:698` — `TestSingleTaskReplayAuditPreservesTerminalResultStatus`
+    - `cmd/orchestrator/main_test.go:706` — `TestSingleTaskReplayAuditPreservesTerminalResultStatus`
   - Purpose: exercises the orchestrator audit replay path and confirms terminal result preservation.
 - **sse-abort**
   - Tests:
@@ -39,7 +39,7 @@ This guide ties the Phase A runtime-governance proof buckets to the concrete tes
   - Purpose: validates router decisions, payload enqueueing, and both rich message and direct send routing.
 - **smoke**
   - Tests:
-    - `cmd/orchestrator/main_test.go:1174` — `TestServeHTTPWriteToolApprovalWebhookSmokeOverLocalHTTP`
+    - `cmd/orchestrator/main_test.go:1175` — `TestServeHTTPWriteToolApprovalWebhookSmokeOverLocalHTTP`
   - Purpose: ensures the orchestrator approval/write-tool success path crosses a distinct scripted local HTTP boundary over loopback, with the chat completion request and approval webhook both posted through a real HTTP server.
 - **all**
   - Tests: the ordered composition of the bucket commands listed below.
@@ -47,7 +47,7 @@ This guide ties the Phase A runtime-governance proof buckets to the concrete tes
 
 ## Exact Commands
 
-Each command below is the exact call `scripts/proof_gold_path.sh` dispatches for its bucket. The `smoke` command requires loopback bind permission; in sandbox-constrained runs it may skip instead of exercising the socket boundary.
+Each command below is the exact call `scripts/proof_gold_path.sh` dispatches for its bucket. The `smoke` command requires loopback bind permission, and the runner counts a skipped smoke test as failure so the real HTTP boundary is never mistaken for a proved pass.
 
 - `approval-success`:
   - `go test ./internal/gateway -run 'Test(ChatCompletionsHandlerExecutesWriteToolAfterApproval|ChatCompletionsHandlerStreamsWriteToolAfterApproval)' -count=1`
@@ -59,7 +59,7 @@ Each command below is the exact call `scripts/proof_gold_path.sh` dispatches for
 - `audit-replay`: `go test ./cmd/orchestrator -run 'TestSingleTaskReplayAuditPreservesTerminalResultStatus' -count=1`
 - `sse-abort`: `go test ./internal/gateway -run 'Test(SenderDisconnectDoesNotEmitDoneFrame|SenderPublishesAbortedStreamAuditOnDisconnect|SenderPublishesDoneStatusAuditWhenFinalChunkDisconnects)' -count=1`
 - `gateway-route`: `go test ./internal/gateway -run 'Test(HandleIncomingTracksTaskRouteAndEnqueuesUnifiedPayload|StartStreamListenerRoutesRichMessageToRegisteredAdapter|StartStreamListenerDirectSendUsesExplicitChannelMessage|StartStreamListenerDirectSendOverridesRouteBinding)' -count=1`
-- `smoke`: `go test ./cmd/orchestrator -run 'TestServeHTTPWriteToolApprovalWebhookSmokeOverLocalHTTP' -count=1`
+- `smoke`: `go test ./cmd/orchestrator -run '^TestServeHTTPWriteToolApprovalWebhookSmokeOverLocalHTTP$' -count=1 -v`
 - `all`: `scripts/proof_gold_path.sh all` executes the above bucket commands in this order to compose the full gold-path proof.
 
 ## Coverage Boundaries
@@ -84,7 +84,7 @@ Each command below is the exact call `scripts/proof_gold_path.sh` dispatches for
   - Does not prove: completion of write tools or audit state transitions beyond routing.
 - **smoke**
   - Proves: the orchestrator HTTP path completes a write tool after an approval webhook across a real loopback HTTP server, distinct from the recorder-based approval success proof.
-  - Does not prove: every webhook variant or SSE detail handled by the targeted buckets.
+  - Does not prove: every webhook variant or SSE detail handled by the targeted buckets; if loopback binding is blocked, rerun outside the constrained sandbox rather than treating skip as proof.
 - **all**
   - Proves: composing the bucket commands keeps the full gold path green.
   - Does not prove: end-to-end UI, load, or resilience scenarios beyond the scripted proof buckets.
