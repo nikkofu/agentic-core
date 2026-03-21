@@ -27,6 +27,7 @@ type TaskStateStore interface {
 	Save(ctx context.Context, state TaskState) error
 	Get(ctx context.Context, taskID string) (TaskState, error)
 	GetSubTasks(ctx context.Context, parentTaskID string) ([]TaskState, error)
+	ListRecoverable(ctx context.Context) ([]TaskState, error)
 }
 
 type InMemoryTaskStateStore struct {
@@ -67,6 +68,23 @@ func (s *InMemoryTaskStateStore) GetSubTasks(ctx context.Context, parentTaskID s
 	var results []TaskState
 	for _, state := range s.states {
 		if state.ParentTaskID == parentTaskID {
+			results = append(results, state)
+		}
+	}
+	return results, nil
+}
+
+func (s *InMemoryTaskStateStore) ListRecoverable(ctx context.Context) ([]TaskState, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	results := make([]TaskState, 0, len(s.states))
+	for _, state := range s.states {
+		if state.Status == "pending" || state.Status == "running" {
 			results = append(results, state)
 		}
 	}

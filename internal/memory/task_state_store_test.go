@@ -30,3 +30,65 @@ func TestInMemoryTaskStateStoreGetNotFound(t *testing.T) {
 		t.Fatal("expected not found error")
 	}
 }
+
+func TestInMemoryTaskStateStoreListRecoverableReturnsPendingAndRunning(t *testing.T) {
+	store := NewInMemoryTaskStateStore()
+	ctx := context.Background()
+
+	states := []TaskState{
+		{TaskID: "task-pending", Status: "pending"},
+		{TaskID: "task-running", Status: "running"},
+		{TaskID: "task-success", Status: "success"},
+	}
+
+	for _, state := range states {
+		if err := store.Save(ctx, state); err != nil {
+			t.Fatalf("save failed: %v", err)
+		}
+	}
+
+	got, err := store.ListRecoverable(ctx)
+	if err != nil {
+		t.Fatalf("list recoverable failed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 recoverable tasks, got %d: %+v", len(got), got)
+	}
+
+	want := map[string]string{
+		"task-pending": "pending",
+		"task-running": "running",
+	}
+	for _, state := range got {
+		if gotStatus, ok := want[state.TaskID]; !ok || gotStatus != state.Status {
+			t.Fatalf("unexpected recoverable state: %+v", state)
+		}
+	}
+}
+
+func TestInMemoryTaskStateStoreListRecoverableExcludesTerminalStatuses(t *testing.T) {
+	store := NewInMemoryTaskStateStore()
+	ctx := context.Background()
+
+	states := []TaskState{
+		{TaskID: "task-success", Status: "success"},
+		{TaskID: "task-failed", Status: "failed"},
+		{TaskID: "task-rejected", Status: "rejected"},
+		{TaskID: "task-timeout", Status: "timeout"},
+		{TaskID: "task-cancelled", Status: "cancelled"},
+	}
+
+	for _, state := range states {
+		if err := store.Save(ctx, state); err != nil {
+			t.Fatalf("save failed: %v", err)
+		}
+	}
+
+	got, err := store.ListRecoverable(ctx)
+	if err != nil {
+		t.Fatalf("list recoverable failed: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no recoverable tasks, got %+v", got)
+	}
+}

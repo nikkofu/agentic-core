@@ -83,3 +83,25 @@ func (s *SQLiteTaskStateStore) GetSubTasks(ctx context.Context, parentTaskID str
 	}
 	return results, rows.Err()
 }
+
+func (s *SQLiteTaskStateStore) ListRecoverable(ctx context.Context) ([]TaskState, error) {
+	q := `SELECT task_id, parent_task_id, agent_name, status, updated_at_unix, error_message FROM task_states WHERE status IN ('pending', 'running')`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []TaskState
+	for rows.Next() {
+		var state TaskState
+		var parentID, agentName sql.NullString
+		if err := rows.Scan(&state.TaskID, &parentID, &agentName, &state.Status, &state.UpdatedAtUnix, &state.ErrorMessage); err != nil {
+			return nil, err
+		}
+		state.ParentTaskID = parentID.String
+		state.AgentName = agentName.String
+		results = append(results, state)
+	}
+	return results, rows.Err()
+}
