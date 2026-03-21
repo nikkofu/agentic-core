@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -858,12 +859,320 @@ func TestParseAppConfigAcceptsLoopFlag(t *testing.T) {
 	}
 }
 
-func TestRunMainLoopReturnsCanceledOnCanceledContext(t *testing.T) {
+func TestRunMainRecoversPendingAndRunningTasksBeforeIntake(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := runMain(ctx, []string{"--sqlite-dsn", ":memory:", "--redis-addr", "skip", "--mqtt-broker", "skip", "--loop"}); err != context.Canceled {
+	defer cancel()
+
+	cfg := AppConfig{SQLiteDSN: ":memory:", RedisAddr: "skip", MQTTBroker: "skip", Loop: true}
+	app, err := NewApp(ctx, cfg)
+	if err != nil {
+		t.Fatalf("new app failed: %v", err)
+	}
+	app.proc = &fakeProcessManager{}
+
+	if err := app.taskStore.Save(ctx, memory.TaskState{TaskID: "recover-running", Status: memory.TaskStatusRunning, AgentName: "planner", UpdatedAtUnix: time.Now().Unix()}); err != nil {
+		t.Fatalf("seed recoverable task failed: %v", err)
+	}
+
+	if err := app.queue.Enqueue(ctx, "tasks", bus.Message{
+		MessageID:   "intake-task",
+		SenderID:    "user",
+		ReceiverID:  "orchestrator",
+		TargetAgent: "researcher",
+		Payload:     json.RawMessage(`{"input":"normal-intake"}`),
+		Timestamp:   time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatalf("seed intake task failed: %v", err)
+	}
+
+	originalNewApp := newApp
+	newApp = func(ctx context.Context, gotCfg AppConfig) (*App, error) {
+		return app, nil
+	}
+	defer func() { newApp = originalNewApp }()
+
+	go func() {
+		time.Sleep(120 * time.Millisecond)
+		cancel()
+	}()
+
+	if err := runMain(ctx, []string{"--sqlite-dsn", ":memory:", "--redis-addr", "skip", "--mqtt-broker", "skip", "--loop", "--http-port", ":0"}); err != context.Canceled {
 		t.Fatalf("expected context canceled, got %v", err)
 	}
+
+	recoveryCh, err := app.queue.Dequeue(context.Background(), "task.recover-running")
+	if err != nil {
+		t.Fatalf("dequeue recovery channel failed: %v", err)
+	}
+	select {
+	case msg := <-recoveryCh:
+		if msg.MessageID != "recover-running" {
+			t.Fatalf("expected recovery task first, got %s", msg.MessageID)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected recovery task enqueue before intake")
+	}
+
+	intakeCh, err := app.queue.Dequeue(context.Background(), "task.intake-task")
+	if err != nil {
+		t.Fatalf("dequeue intake channel failed: %v", err)
+	}
+	select {
+	case msg := <-intakeCh:
+		if msg.MessageID != "intake-task" {
+			t.Fatalf("expected intake task, got %s", msg.MessageID)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected intake task after recovery")
+	}
+}
+
+func TestRecoverTasksOnStartupSkipsTerminalStates(t *testing.T) {
+	cfg := AppConfig{SQLiteDSN: "file:orchestrator-recover-skip-terminal?mode=memory&cache=shared", RedisAddr: "skip", MQTTBroker: "skip"}
+	app, err := NewApp(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new app failed: %v", err)
+	}
+	app.proc = &fakeProcessManager{}
+
+	if err := app.taskStore.Save(context.Background(), memory.TaskState{TaskID: "terminal-success", Status: memory.TaskStatusSuccess, AgentName: "planner", UpdatedAtUnix: time.Now().Unix()}); err != nil {
+		t.Fatalf("seed success task failed: %v", err)
+	}
+	if err := app.taskStore.Save(context.Background(), memory.TaskState{TaskID: "terminal-failed", Status: memory.TaskStatusFailed, AgentName: "planner", UpdatedAtUnix: time.Now().Unix()}); err != nil {
+		t.Fatalf("seed failed task failed: %v", err)
+	}
+	if err := app.taskStore.Save(context.Background(), memory.TaskState{TaskID: "recover-pending", Status: memory.TaskStatusPending, AgentName: "planner", UpdatedAtUnix: time.Now().Unix()}); err != nil {
+		t.Fatalf("seed pending task failed: %v", err)
+	}
+
+	if err := app.RecoverTasksOnStartup(context.Background()); err != nil {
+		t.Fatalf("recover on startup failed: %v", err)
+	}
+
+	pendingCh, err := app.queue.Dequeue(context.Background(), "task.recover-pending")
+	if err != nil {
+		t.Fatalf("dequeue pending task channel failed: %v", err)
+	}
+	select {
+	case msg := <-pendingCh:
+		if msg.MessageID != "recover-pending" {
+			t.Fatalf("expected recover-pending enqueue, got %s", msg.MessageID)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected recover-pending enqueue")
+	}
+
+	successCh, err := app.queue.Dequeue(context.Background(), "task.terminal-success")
+	if err != nil {
+		t.Fatalf("dequeue success channel failed: %v", err)
+	}
+	select {
+	case msg := <-successCh:
+		t.Fatalf("terminal task should not enqueue, got %+v", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestRecoverTasksOnStartupRecordsAttemptAudit(t *testing.T) {
+	cfg := AppConfig{SQLiteDSN: "file:orchestrator-recover-audit?mode=memory&cache=shared", RedisAddr: "skip", MQTTBroker: "skip"}
+	app, err := NewApp(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new app failed: %v", err)
+	}
+	app.proc = &fakeProcessManager{}
+
+	if err := app.taskStore.Save(context.Background(), memory.TaskState{TaskID: "recover-audit", Status: memory.TaskStatusRunning, AgentName: "planner", UpdatedAtUnix: time.Now().Unix()}); err != nil {
+		t.Fatalf("seed task failed: %v", err)
+	}
+
+	audits, err := app.events.Subscribe(context.Background(), "audit.recover-audit")
+	if err != nil {
+		t.Fatalf("subscribe audit failed: %v", err)
+	}
+
+	if err := app.RecoverTasksOnStartup(context.Background()); err != nil {
+		t.Fatalf("recover on startup failed: %v", err)
+	}
+
+	seenStarted := false
+	seenEnqueued := false
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && (!seenStarted || !seenEnqueued) {
+		select {
+		case msg := <-audits:
+			var event llm.AuditEvent
+			if err := json.Unmarshal(msg.Payload, &event); err != nil {
+				t.Fatalf("unmarshal audit event failed: %v", err)
+			}
+			if event.Event == "task_recovery_started" {
+				seenStarted = true
+				var payload map[string]any
+				if err := json.Unmarshal(event.Data, &payload); err != nil {
+					t.Fatalf("unmarshal started payload failed: %v", err)
+				}
+				if payload["attempt_id"] == "" {
+					t.Fatalf("expected attempt id in started payload: %+v", payload)
+				}
+			}
+			if event.Event == "task_recovery_enqueued" {
+				seenEnqueued = true
+			}
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if !seenStarted || !seenEnqueued {
+		t.Fatalf("expected recovery started and enqueued audits, got started=%v enqueued=%v", seenStarted, seenEnqueued)
+	}
+}
+
+func TestRecoverTasksOnStartupEnqueueFailureKeepsPendingAndStoresErrorMessage(t *testing.T) {
+	cfg := AppConfig{SQLiteDSN: "file:orchestrator-recover-failure?mode=memory&cache=shared", RedisAddr: "skip", MQTTBroker: "skip"}
+	app, err := NewApp(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new app failed: %v", err)
+	}
+	failing := &recoveryQueueStub{failQueues: map[string]error{"task.recover-fail": errors.New("enqueue unavailable")}}
+	app.queue = failing
+	app.proc = &fakeProcessManager{}
+
+	if err := app.taskStore.Save(context.Background(), memory.TaskState{TaskID: "recover-fail", Status: memory.TaskStatusRunning, AgentName: "planner", UpdatedAtUnix: time.Now().Unix()}); err != nil {
+		t.Fatalf("seed task failed: %v", err)
+	}
+
+	audits, err := app.events.Subscribe(context.Background(), "audit.recover-fail")
+	if err != nil {
+		t.Fatalf("subscribe audit failed: %v", err)
+	}
+
+	if err := app.RecoverTasksOnStartup(context.Background()); err != nil {
+		t.Fatalf("recovery should not return error on single task enqueue failure, got %v", err)
+	}
+
+	state, err := app.taskStore.Get(context.Background(), "recover-fail")
+	if err != nil {
+		t.Fatalf("get task state failed: %v", err)
+	}
+	if state.Status != memory.TaskStatusPending {
+		t.Fatalf("expected pending status after failed recovery enqueue, got %s", state.Status)
+	}
+	if !strings.Contains(state.ErrorMessage, "attempt") || !strings.Contains(state.ErrorMessage, "enqueue unavailable") {
+		t.Fatalf("expected error message with attempt and cause, got %s", state.ErrorMessage)
+	}
+
+	seenFailed := false
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && !seenFailed {
+		select {
+		case msg := <-audits:
+			var event llm.AuditEvent
+			if err := json.Unmarshal(msg.Payload, &event); err != nil {
+				t.Fatalf("unmarshal audit event failed: %v", err)
+			}
+			if event.Event == "task_recovery_failed" {
+				seenFailed = true
+			}
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if !seenFailed {
+		t.Fatal("expected task_recovery_failed audit event")
+	}
+}
+
+func TestRecoverTasksOnStartupDoesNotEnqueueSameTaskTwiceInSingleRun(t *testing.T) {
+	cfg := AppConfig{SQLiteDSN: "file:orchestrator-recover-idempotent?mode=memory&cache=shared", RedisAddr: "skip", MQTTBroker: "skip"}
+	app, err := NewApp(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new app failed: %v", err)
+	}
+	app.proc = &fakeProcessManager{}
+
+	store := &recoverableDuplicateStore{
+		base: app.taskStore,
+		recoverable: []memory.TaskState{
+			{TaskID: "dup-task", Status: memory.TaskStatusPending, AgentName: "planner"},
+			{TaskID: "dup-task", Status: memory.TaskStatusRunning, AgentName: "planner"},
+		},
+	}
+	app.taskStore = store
+
+	if err := app.RecoverTasksOnStartup(context.Background()); err != nil {
+		t.Fatalf("recover on startup failed: %v", err)
+	}
+
+	if got := store.getSaveCount("dup-task"); got != 1 {
+		t.Fatalf("expected duplicate task recovered once, save count=%d", got)
+	}
+
+	recoveryCh, err := app.queue.Dequeue(context.Background(), "task.dup-task")
+	if err != nil {
+		t.Fatalf("dequeue recovery channel failed: %v", err)
+	}
+	select {
+	case <-recoveryCh:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected first recovery enqueue")
+	}
+	select {
+	case msg := <-recoveryCh:
+		t.Fatalf("expected no second enqueue for duplicate task, got %+v", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+type recoveryQueueStub struct {
+	base       bus.TaskQueue
+	failQueues map[string]error
+}
+
+func (r *recoveryQueueStub) Enqueue(ctx context.Context, queue string, msg bus.Message) error {
+	if err, ok := r.failQueues[queue]; ok {
+		return err
+	}
+	if r.base == nil {
+		r.base = bus.NewFakeTransport()
+	}
+	return r.base.Enqueue(ctx, queue, msg)
+}
+
+func (r *recoveryQueueStub) Dequeue(ctx context.Context, queue string) (<-chan bus.Message, error) {
+	if r.base == nil {
+		r.base = bus.NewFakeTransport()
+	}
+	return r.base.Dequeue(ctx, queue)
+}
+
+type recoverableDuplicateStore struct {
+	base        memory.TaskStateStore
+	recoverable []memory.TaskState
+	saveCount   map[string]int
+}
+
+func (s *recoverableDuplicateStore) Save(ctx context.Context, state memory.TaskState) error {
+	if s.saveCount == nil {
+		s.saveCount = make(map[string]int)
+	}
+	s.saveCount[state.TaskID]++
+	return s.base.Save(ctx, state)
+}
+
+func (s *recoverableDuplicateStore) Get(ctx context.Context, taskID string) (memory.TaskState, error) {
+	return s.base.Get(ctx, taskID)
+}
+
+func (s *recoverableDuplicateStore) GetSubTasks(ctx context.Context, parentTaskID string) ([]memory.TaskState, error) {
+	return s.base.GetSubTasks(ctx, parentTaskID)
+}
+
+func (s *recoverableDuplicateStore) ListRecoverable(ctx context.Context) ([]memory.TaskState, error) {
+	return s.recoverable, nil
+}
+
+func (s *recoverableDuplicateStore) getSaveCount(taskID string) int {
+	if s.saveCount == nil {
+		return 0
+	}
+	return s.saveCount[taskID]
 }
 
 func TestHandleApprovalPublishesUnifiedDecision(t *testing.T) {

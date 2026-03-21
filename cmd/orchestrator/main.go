@@ -64,6 +64,8 @@ type App struct {
 	workflows map[string]*workflow.Workflow
 }
 
+var newApp = NewApp
+
 func ParseAppConfig(args []string) (AppConfig, error) {
 	fs := flag.NewFlagSet("orchestrator", flag.ContinueOnError)
 	cfg := AppConfig{}
@@ -366,53 +368,170 @@ func (a *App) ProcessOneTask(ctx context.Context) error {
 		if !ok {
 			return errors.New("tasks channel closed")
 		}
-		agentType := msg.TargetAgent
-		if agentType == "" {
-			agentType = "orchestrator" // Default
+		return a.enqueueAndStartTask(ctx, msg)
+	}
+}
+
+func (a *App) RecoverTasksOnStartup(ctx context.Context) error {
+	recoverable, err := a.taskStore.ListRecoverable(ctx)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[string]struct{}, len(recoverable))
+	recovered := 0
+	skipped := 0
+	failed := 0
+
+	for _, state := range recoverable {
+		if memory.IsTerminalTaskStatus(state.Status) {
+			skipped++
+			continue
 		}
-
-		wf := workflow.NewWorkflow(a.OnNodeReady)
-		_ = wf.AddTask(msg.MessageID, agentType, nil)
-		a.mu.Lock()
-		a.workflows[msg.MessageID] = wf
-		a.mu.Unlock()
-
-		taskChannel := "task." + msg.MessageID
-		_ = a.queue.Enqueue(ctx, taskChannel, msg)
-		if err := wf.Start(ctx); err != nil {
-			_ = a.taskStore.Save(ctx, memory.TaskState{
-				TaskID:        msg.MessageID,
-				ParentTaskID:  msg.ParentTaskID,
-				AgentName:     agentType,
-				Status:        "failed",
-				UpdatedAtUnix: time.Now().Unix(),
-				ErrorMessage:  err.Error(),
-			})
-			return err
+		if _, ok := seen[state.TaskID]; ok {
+			skipped++
+			continue
 		}
+		seen[state.TaskID] = struct{}{}
 
-		if err := a.taskStore.Save(ctx, memory.TaskState{
+		if err := a.recoverOneTask(ctx, state); err != nil {
+			failed++
+			continue
+		}
+		recovered++
+	}
+
+	a.logger.Info("startup recovery completed",
+		"total", len(recoverable),
+		"recovered", recovered,
+		"skipped", skipped,
+		"failed", failed,
+	)
+	return nil
+}
+
+func (a *App) recoverOneTask(ctx context.Context, state memory.TaskState) error {
+	attemptID := fmt.Sprintf("recovery-%s-%d", state.TaskID, time.Now().UnixNano())
+	attemptPayload, _ := json.Marshal(map[string]any{
+		"attempt_id": attemptID,
+		"task_id":    state.TaskID,
+		"status":     state.Status,
+	})
+	_ = a.auditor.Record(ctx, llm.AuditEvent{
+		TaskID:       state.TaskID,
+		ParentTaskID: state.ParentTaskID,
+		Event:        "task_recovery_started",
+		Actor:        "orchestrator",
+		Status:       memory.NormalizeTaskStatus(state.Status),
+		Data:         attemptPayload,
+		TimestampMs:  time.Now().UnixMilli(),
+	})
+
+	taskMsg := bus.Message{
+		MessageID:    state.TaskID,
+		ParentTaskID: state.ParentTaskID,
+		SenderID:     "orchestrator",
+		ReceiverID:   "orchestrator",
+		TargetAgent:  state.AgentName,
+		Payload:      json.RawMessage(`{"recovery":true}`),
+		Timestamp:    time.Now().UnixMilli(),
+	}
+
+	if err := a.enqueueAndStartTask(ctx, taskMsg); err != nil {
+		errMsg := fmt.Sprintf("recovery attempt %s failed: %v", attemptID, err)
+		_ = a.taskStore.Save(ctx, memory.TaskState{
+			TaskID:        state.TaskID,
+			ParentTaskID:  state.ParentTaskID,
+			AgentName:     state.AgentName,
+			Status:        memory.TaskStatusPending,
+			UpdatedAtUnix: time.Now().Unix(),
+			ErrorMessage:  errMsg,
+		})
+
+		failurePayload, _ := json.Marshal(map[string]any{
+			"attempt_id": attemptID,
+			"task_id":    state.TaskID,
+			"cause":      err.Error(),
+		})
+		_ = a.auditor.Record(ctx, llm.AuditEvent{
+			TaskID:       state.TaskID,
+			ParentTaskID: state.ParentTaskID,
+			Event:        "task_recovery_failed",
+			Actor:        "orchestrator",
+			Status:       memory.TaskStatusPending,
+			Error:        err.Error(),
+			Data:         failurePayload,
+			TimestampMs:  time.Now().UnixMilli(),
+		})
+		return err
+	}
+
+	enqueuedPayload, _ := json.Marshal(map[string]any{
+		"attempt_id": attemptID,
+		"task_id":    state.TaskID,
+	})
+	_ = a.auditor.Record(ctx, llm.AuditEvent{
+		TaskID:       state.TaskID,
+		ParentTaskID: state.ParentTaskID,
+		Event:        "task_recovery_enqueued",
+		Actor:        "orchestrator",
+		Status:       memory.TaskStatusRunning,
+		Data:         enqueuedPayload,
+		TimestampMs:  time.Now().UnixMilli(),
+	})
+
+	return nil
+}
+
+func (a *App) enqueueAndStartTask(ctx context.Context, msg bus.Message) error {
+	agentType := msg.TargetAgent
+	if agentType == "" {
+		agentType = "orchestrator" // Default
+	}
+
+	wf := workflow.NewWorkflow(a.OnNodeReady)
+	_ = wf.AddTask(msg.MessageID, agentType, nil)
+	a.mu.Lock()
+	a.workflows[msg.MessageID] = wf
+	a.mu.Unlock()
+
+	taskChannel := "task." + msg.MessageID
+	if err := a.queue.Enqueue(ctx, taskChannel, msg); err != nil {
+		return err
+	}
+	if err := wf.Start(ctx); err != nil {
+		_ = a.taskStore.Save(ctx, memory.TaskState{
 			TaskID:        msg.MessageID,
 			ParentTaskID:  msg.ParentTaskID,
 			AgentName:     agentType,
-			Status:        "running",
+			Status:        "failed",
 			UpdatedAtUnix: time.Now().Unix(),
-		}); err != nil {
-			return err
-		}
-
-		_ = a.auditor.Record(ctx, llm.AuditEvent{
-			TaskID:       msg.MessageID,
-			ParentTaskID: msg.ParentTaskID,
-			Event:        "route",
-			Actor:        "orchestrator",
-			Status:       "running",
-			Data:         msg.Payload,
-			TimestampMs:  time.Now().UnixMilli(),
+			ErrorMessage:  err.Error(),
 		})
-
-		return nil
+		return err
 	}
+
+	if err := a.taskStore.Save(ctx, memory.TaskState{
+		TaskID:        msg.MessageID,
+		ParentTaskID:  msg.ParentTaskID,
+		AgentName:     agentType,
+		Status:        "running",
+		UpdatedAtUnix: time.Now().Unix(),
+	}); err != nil {
+		return err
+	}
+
+	_ = a.auditor.Record(ctx, llm.AuditEvent{
+		TaskID:       msg.MessageID,
+		ParentTaskID: msg.ParentTaskID,
+		Event:        "route",
+		Actor:        "orchestrator",
+		Status:       "running",
+		Data:         msg.Payload,
+		TimestampMs:  time.Now().UnixMilli(),
+	})
+
+	return nil
 }
 
 func (a *App) ProcessLoop(ctx context.Context) error {
@@ -440,7 +559,7 @@ func runMain(ctx context.Context, args []string) error {
 	if _, err := logging.Init(logging.DefaultConfig("orchestrator")); err != nil {
 		return err
 	}
-	app, err := NewApp(ctx, cfg)
+	app, err := newApp(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -460,6 +579,9 @@ func runMain(ctx context.Context, args []string) error {
 	defer server.Shutdown(context.Background())
 
 	if cfg.Loop {
+		if err := app.RecoverTasksOnStartup(ctx); err != nil {
+			return err
+		}
 		return app.ProcessLoop(ctx)
 	}
 	return app.Run(ctx)
