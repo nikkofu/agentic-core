@@ -7,14 +7,19 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	HeaderSignature = "X-Agentic-Signature"
-	HeaderTimestamp = "X-Agentic-Timestamp"
-	HeaderNonce     = "X-Agentic-Nonce"
+	HeaderSignature = "X-Signature"
+	HeaderTimestamp = "X-Timestamp"
+	HeaderNonce     = "X-Nonce"
+
+	nonceTTL   = 300 * time.Second
+	timeWindow = 300 * time.Second
+	sigPrefix  = "sha256="
 )
 
 // NonceStore 负责存储和校验 nonce，防止重放攻击
@@ -35,7 +40,6 @@ func (s *InMemNonceStore) CheckAndSet(nonce string, ttl time.Duration) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 清理过期 nonce (简单处理，实际应用中应有更高效的清理机制)
 	now := time.Now()
 	for k, v := range s.nonces {
 		if now.After(v) {
@@ -44,7 +48,7 @@ func (s *InMemNonceStore) CheckAndSet(nonce string, ttl time.Duration) bool {
 	}
 
 	if _, ok := s.nonces[nonce]; ok {
-		return false // 已存在，重放
+		return false
 	}
 
 	s.nonces[nonce] = now.Add(ttl)
@@ -56,7 +60,7 @@ func GenerateSignature(secret string, timestamp int64, nonce string, body []byte
 	payload := fmt.Sprintf("%d.%s.%s", timestamp, nonce, string(body))
 	h := hmac.New(sha256.New, []byte(secret))
 	h.Write([]byte(payload))
-	return hex.EncodeToString(h.Sum(nil))
+	return sigPrefix + hex.EncodeToString(h.Sum(nil))
 }
 
 // VerifyWebhookSignature 验证 Webhook 签名
@@ -69,27 +73,34 @@ func VerifyWebhookSignature(headers http.Header, body []byte, secret string, sto
 		return fmt.Errorf("missing security headers")
 	}
 
-	// 1. 验证时间戳窗口 (允许前后 5 分钟误差)
 	ts, err := strconv.ParseInt(tsStr, 10, 64)
 	if err != nil {
 		return fmt.Errorf("invalid timestamp")
 	}
-	diff := now.Unix() - ts
-	if diff < -300 || diff > 300 {
+	if diff := now.Unix() - ts; diff < -int64(timeWindow.Seconds()) || diff > int64(timeWindow.Seconds()) {
 		return fmt.Errorf("timestamp out of window")
 	}
 
-	// 2. 验证 Nonce 重放
-	if store != nil {
-		if ok := store.CheckAndSet(nonce, 10*time.Minute); !ok {
-			return fmt.Errorf("replayed nonce")
-		}
+	if !strings.HasPrefix(sig, sigPrefix) {
+		return fmt.Errorf("invalid signature prefix")
+	}
+	received, err := hex.DecodeString(strings.TrimPrefix(sig, sigPrefix))
+	if err != nil {
+		return fmt.Errorf("invalid signature digest")
 	}
 
-	// 3. 验证 HMAC
-	expected := GenerateSignature(secret, ts, nonce, body)
-	if !hmac.Equal([]byte(sig), []byte(expected)) {
+	expectedPayload := fmt.Sprintf("%d.%s.%s", ts, nonce, string(body))
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(expectedPayload))
+	expected := h.Sum(nil)
+	if !hmac.Equal(received, expected) {
 		return fmt.Errorf("invalid signature")
+	}
+
+	if store != nil {
+		if ok := store.CheckAndSet(nonce, nonceTTL); !ok {
+			return fmt.Errorf("replayed nonce")
+		}
 	}
 
 	return nil
