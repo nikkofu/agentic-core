@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -204,7 +205,15 @@ func (a *App) handleApproval(w http.ResponseWriter, r *http.Request) {
 
 	if a.cfg.ApprovalSecret != "" {
 		if err := skill.VerifyWebhookSignature(r.Header, body, a.cfg.ApprovalSecret, a.nonceStore, time.Now()); err != nil {
-			http.Error(w, "Invalid signature", http.StatusUnauthorized)
+			statusCode := http.StatusUnauthorized
+			errorCode := "invalid_signature"
+			if strings.Contains(err.Error(), "missing security headers") {
+				statusCode = http.StatusBadRequest
+				errorCode = "invalid_request"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(statusCode)
+			_, _ = w.Write([]byte(`{"error":"` + errorCode + `"}`))
 			return
 		}
 	}
