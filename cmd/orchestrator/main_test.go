@@ -1294,6 +1294,63 @@ func TestHandleApprovalPublishesApprovalAuditEvent(t *testing.T) {
 	}
 }
 
+func TestHandleApprovalRejectsMissingSecurityHeaders(t *testing.T) {
+	cfg := AppConfig{
+		SQLiteDSN:      ":memory:",
+		RedisAddr:      "skip",
+		MQTTBroker:     "skip",
+		ApprovalSecret: "test-secret",
+	}
+	app, err := NewApp(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new app failed: %v", err)
+	}
+
+	body := `{"task_id":"task-1","tool_call_id":"call-1","approved":true,"reviewer":"alice"}`
+	req := httptest.NewRequest(http.MethodPost, "/approval", strings.NewReader(body))
+
+	rec := httptest.NewRecorder()
+	app.handleApproval(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if strings.TrimSpace(rec.Body.String()) != `{"error":"invalid_request"}` {
+		t.Fatalf("expected invalid_request body, got %s", rec.Body.String())
+	}
+}
+
+func TestHandleApprovalRejectsOutOfWindowTimestamp(t *testing.T) {
+	cfg := AppConfig{
+		SQLiteDSN:      ":memory:",
+		RedisAddr:      "skip",
+		MQTTBroker:     "skip",
+		ApprovalSecret: "test-secret",
+	}
+	app, err := NewApp(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new app failed: %v", err)
+	}
+
+	body := `{"task_id":"task-1","tool_call_id":"call-1","approved":true,"reviewer":"alice"}`
+	req := httptest.NewRequest(http.MethodPost, "/approval", strings.NewReader(body))
+	ts := time.Now().Add(-10 * time.Minute).Unix()
+	nonce := "nonce-out-of-window"
+	req.Header.Set(skill.HeaderTimestamp, fmt.Sprintf("%d", ts))
+	req.Header.Set(skill.HeaderNonce, nonce)
+	req.Header.Set(skill.HeaderSignature, skill.GenerateSignature(cfg.ApprovalSecret, ts, nonce, []byte(body)))
+
+	rec := httptest.NewRecorder()
+	app.handleApproval(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if strings.TrimSpace(rec.Body.String()) != `{"error":"invalid_signature"}` {
+		t.Fatalf("expected invalid_signature body, got %s", rec.Body.String())
+	}
+}
+
 func TestHandleApprovalRejectsInvalidSignature(t *testing.T) {
 	cfg := AppConfig{
 		SQLiteDSN:      ":memory:",
@@ -1306,7 +1363,7 @@ func TestHandleApprovalRejectsInvalidSignature(t *testing.T) {
 		t.Fatalf("new app failed: %v", err)
 	}
 
-	body := `{"task_id":"task-1","tool_call_id":"call-1","approved":true}`
+	body := `{"task_id":"task-1","tool_call_id":"call-1","approved":true,"reviewer":"alice"}`
 	req := httptest.NewRequest(http.MethodPost, "/approval", strings.NewReader(body))
 	req.Header.Set(skill.HeaderTimestamp, fmt.Sprintf("%d", time.Now().Unix()))
 	req.Header.Set(skill.HeaderNonce, "nonce-invalid")
@@ -1317,6 +1374,111 @@ func TestHandleApprovalRejectsInvalidSignature(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if strings.TrimSpace(rec.Body.String()) != `{"error":"invalid_signature"}` {
+		t.Fatalf("expected invalid_signature body, got %s", rec.Body.String())
+	}
+}
+
+func TestHandleApprovalRejectsReplayNonce(t *testing.T) {
+	cfg := AppConfig{
+		SQLiteDSN:      ":memory:",
+		RedisAddr:      "skip",
+		MQTTBroker:     "skip",
+		ApprovalSecret: "test-secret",
+	}
+	app, err := NewApp(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new app failed: %v", err)
+	}
+
+	body := `{"task_id":"task-1","tool_call_id":"call-1","approved":true,"reviewer":"alice"}`
+	ts := time.Now().Unix()
+	nonce := "nonce-replay"
+	sig := skill.GenerateSignature(cfg.ApprovalSecret, ts, nonce, []byte(body))
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/approval", strings.NewReader(body))
+	firstReq.Header.Set(skill.HeaderTimestamp, fmt.Sprintf("%d", ts))
+	firstReq.Header.Set(skill.HeaderNonce, nonce)
+	firstReq.Header.Set(skill.HeaderSignature, sig)
+	firstRec := httptest.NewRecorder()
+	app.handleApproval(firstRec, firstReq)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("expected initial request 200, got %d", firstRec.Code)
+	}
+
+	replayReq := httptest.NewRequest(http.MethodPost, "/approval", strings.NewReader(body))
+	replayReq.Header.Set(skill.HeaderTimestamp, fmt.Sprintf("%d", ts))
+	replayReq.Header.Set(skill.HeaderNonce, nonce)
+	replayReq.Header.Set(skill.HeaderSignature, sig)
+	replayRec := httptest.NewRecorder()
+	app.handleApproval(replayRec, replayReq)
+
+	if replayRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", replayRec.Code)
+	}
+	if strings.TrimSpace(replayRec.Body.String()) != `{"error":"invalid_signature"}` {
+		t.Fatalf("expected invalid_signature body, got %s", replayRec.Body.String())
+	}
+}
+
+func TestHandleApprovalAuthFailureDoesNotPublishApprovalEvent(t *testing.T) {
+	cfg := AppConfig{
+		SQLiteDSN:      "file:approval-auth-failure-no-publish?mode=memory&cache=shared",
+		RedisAddr:      "skip",
+		MQTTBroker:     "skip",
+		ApprovalSecret: "test-secret",
+	}
+	app, err := NewApp(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new app failed: %v", err)
+	}
+
+	approvalEvents, err := app.events.Subscribe(context.Background(), "approvals")
+	if err != nil {
+		t.Fatalf("subscribe approvals failed: %v", err)
+	}
+	auditEvents, err := app.events.Subscribe(context.Background(), "audit.*")
+	if err != nil {
+		t.Fatalf("subscribe audits failed: %v", err)
+	}
+
+	body := `{"task_id":"task-1","tool_call_id":"call-1","approved":true,"reviewer":"alice"}`
+	req := httptest.NewRequest(http.MethodPost, "/approval", strings.NewReader(body))
+	req.Header.Set(skill.HeaderTimestamp, fmt.Sprintf("%d", time.Now().Unix()))
+	req.Header.Set(skill.HeaderNonce, "nonce-auth-fail")
+	req.Header.Set(skill.HeaderSignature, "bad-signature")
+
+	rec := httptest.NewRecorder()
+	app.handleApproval(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if strings.TrimSpace(rec.Body.String()) != `{"error":"invalid_signature"}` {
+		t.Fatalf("expected invalid_signature body, got %s", rec.Body.String())
+	}
+
+	select {
+	case msg := <-approvalEvents:
+		t.Fatalf("expected no approval event on auth failure, got %+v", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		select {
+		case msg := <-auditEvents:
+			var event llm.AuditEvent
+			if err := json.Unmarshal(msg.Payload, &event); err != nil {
+				t.Fatalf("unmarshal audit event failed: %v", err)
+			}
+			if event.Event == "approval_decision" {
+				t.Fatalf("expected no approval_decision audit on auth failure, got %+v", event)
+			}
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 }
 
