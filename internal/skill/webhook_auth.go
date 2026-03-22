@@ -72,6 +72,9 @@ func VerifyWebhookSignature(headers http.Header, body []byte, secret string, sto
 	if sig == "" || tsStr == "" || nonce == "" {
 		return fmt.Errorf("missing security headers")
 	}
+	if store == nil {
+		return fmt.Errorf("nonce store required")
+	}
 
 	ts, err := strconv.ParseInt(tsStr, 10, 64)
 	if err != nil {
@@ -97,10 +100,8 @@ func VerifyWebhookSignature(headers http.Header, body []byte, secret string, sto
 		return fmt.Errorf("invalid signature")
 	}
 
-	if store != nil {
-		if ok := store.CheckAndSet(nonce, nonceTTL); !ok {
-			return fmt.Errorf("replayed nonce")
-		}
+	if ok := store.CheckAndSet(nonce, nonceTTL); !ok {
+		return fmt.Errorf("replayed nonce")
 	}
 
 	return nil

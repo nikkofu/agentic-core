@@ -27,7 +27,7 @@ func TestVerifyWebhookSignature(t *testing.T) {
 		headers.Set(HeaderTimestamp, "not-a-timestamp")
 		headers.Set(HeaderNonce, nonce)
 
-		err := VerifyWebhookSignature(headers, body, secret, nil, now)
+		err := VerifyWebhookSignature(headers, body, secret, NewInMemNonceStore(), now)
 		if err == nil || err.Error() != "invalid timestamp" {
 			t.Fatalf("expected invalid timestamp error, got: %v", err)
 		}
@@ -40,7 +40,7 @@ func TestVerifyWebhookSignature(t *testing.T) {
 		headers.Set(HeaderTimestamp, fmt.Sprintf("%d", oldTS))
 		headers.Set(HeaderNonce, nonce)
 
-		err := VerifyWebhookSignature(headers, body, secret, nil, now)
+		err := VerifyWebhookSignature(headers, body, secret, NewInMemNonceStore(), now)
 		if err == nil || err.Error() != "timestamp out of window" {
 			t.Fatalf("expected timestamp window error, got: %v", err)
 		}
@@ -52,7 +52,7 @@ func TestVerifyWebhookSignature(t *testing.T) {
 		headers.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
 		headers.Set(HeaderNonce, nonce)
 
-		err := VerifyWebhookSignature(headers, body, secret, nil, now)
+		err := VerifyWebhookSignature(headers, body, secret, NewInMemNonceStore(), now)
 		if err == nil || err.Error() != "invalid signature prefix" {
 			t.Fatalf("expected prefix error, got: %v", err)
 		}
@@ -64,9 +64,21 @@ func TestVerifyWebhookSignature(t *testing.T) {
 		headers.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
 		headers.Set(HeaderNonce, nonce)
 
-		err := VerifyWebhookSignature(headers, body, secret, nil, now)
+		err := VerifyWebhookSignature(headers, body, secret, NewInMemNonceStore(), now)
 		if err == nil || err.Error() != "invalid signature digest" {
 			t.Fatalf("expected digest error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects nil nonce store", func(t *testing.T) {
+		headers := http.Header{}
+		headers.Set(HeaderSignature, GenerateSignature(secret, ts, nonce, body))
+		headers.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
+		headers.Set(HeaderNonce, nonce)
+
+		err := VerifyWebhookSignature(headers, body, secret, nil, now)
+		if err == nil || err.Error() != "nonce store required" {
+			t.Fatalf("expected nonce store error, got: %v", err)
 		}
 	})
 
