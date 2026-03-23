@@ -802,7 +802,7 @@ func TestSingleTaskReplayAuditPreservesTerminalResultStatus(t *testing.T) {
 
 type fakeProcessManager struct{}
 
-func (f *fakeProcessManager) SpawnAgent(ctx context.Context, agentType string, taskID string, extraArgs ...string) (int, error) {
+func (f *fakeProcessManager) SpawnAgent(ctx context.Context, agentType string, taskID string) (int, error) {
 	return 123, nil
 }
 func (f *fakeProcessManager) KillAgent(pid int) error {

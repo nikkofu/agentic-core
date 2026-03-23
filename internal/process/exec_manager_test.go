@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+var _ ProcessManager = (*ExecProcessManager)(nil)
+
 func TestExecProcessManagerSpawnAgentRequiresBinaryPath(t *testing.T) {
 	pm := ExecProcessManager{}
 	_, err := pm.SpawnAgent(context.Background(), "worker", "task-1")

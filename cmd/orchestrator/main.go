@@ -281,18 +281,13 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func (a *App) OnNodeReady(ctx context.Context, agentType string, nodeID string) error {
-	extraArgs := []string{
-		"--redis-addr", a.cfg.RedisAddr,
-		"--mqtt-broker", a.cfg.MQTTBroker,
-	}
-
 	// Get agent profile if exists
 	profile, err := a.registry.GetProfile(agentType)
 	if err == nil {
 		a.logger.Info("spawning agent profile", "agent_type", agentType, "profile_name", profile.Name, "description", profile.Description)
 	}
 
-	pid, err := a.proc.SpawnAgent(ctx, agentType, nodeID, extraArgs...)
+	pid, err := a.proc.SpawnAgent(ctx, agentType, nodeID)
 	if err != nil {
 		return err
 	}
