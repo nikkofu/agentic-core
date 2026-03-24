@@ -4,13 +4,16 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"agentic-core/internal/runtimepaths"
 )
 
 const (
-	defaultLogDir          = "logs"
+	defaultLogDir          = "var/logs"
 	defaultRetentionDays   = 30
 	defaultServiceFileName = "agentic-core"
 )
@@ -36,7 +39,7 @@ func DefaultConfig(service string) Config {
 
 	dir := strings.TrimSpace(os.Getenv("LOG_DIR"))
 	if dir == "" {
-		dir = defaultLogDir
+		dir = resolveDefaultLogDir(defaultLogDir)
 	}
 
 	return Config{
@@ -49,6 +52,20 @@ func DefaultConfig(service string) Config {
 		FileEnable:    true,
 		Now:           time.Now,
 	}
+}
+
+func resolveDefaultLogDir(defaultDir string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return defaultDir
+	}
+
+	runtimeRoot, err := runtimepaths.ResolveRuntimeRoot("", cwd)
+	if err != nil {
+		return defaultDir
+	}
+
+	return filepath.Join(runtimeRoot, filepath.FromSlash(defaultDir))
 }
 
 func ParseLevel(raw string) slog.Level {

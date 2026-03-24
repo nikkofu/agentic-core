@@ -10,6 +10,47 @@ import (
 	"time"
 )
 
+func TestDefaultLogDirUsesRuntimeRootVarLogs(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod failed: %v", err)
+	}
+
+	nested := filepath.Join(root, "cmd", "orchestrator")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("create nested cwd failed: %v", err)
+	}
+	t.Chdir(nested)
+
+	t.Setenv("LOG_DIR", "")
+
+	cfg := DefaultConfig("orchestrator")
+	want := filepath.Join(root, "var", "logs")
+	if cfg.Dir != want {
+		t.Fatalf("expected default log dir %q, got %q", want, cfg.Dir)
+	}
+	if !filepath.IsAbs(cfg.Dir) {
+		t.Fatalf("expected absolute default log dir, got %q", cfg.Dir)
+	}
+}
+
+func TestDefaultConfigRespectsExplicitLogDirOverride(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "internal", "logging")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("create nested cwd failed: %v", err)
+	}
+	t.Chdir(nested)
+
+	override := "custom/logs"
+	t.Setenv("LOG_DIR", override)
+
+	cfg := DefaultConfig("subagent")
+	if cfg.Dir != override {
+		t.Fatalf("expected LOG_DIR override %q, got %q", override, cfg.Dir)
+	}
+}
+
 func TestManagerWritesJSONLineToFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	var console bytes.Buffer
