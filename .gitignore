@@ -1,1 +1,5 @@
 .worktrees/
+var/
+.cache/
+cmd/orchestrator/logs/
+cmd/subagent/*.db
