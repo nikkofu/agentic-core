@@ -3,8 +3,10 @@ package runtimepaths
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func ResolveRuntimeRoot(override string, cwd string) (string, error) {
@@ -43,6 +45,51 @@ func ResolveRuntimeRoot(override string, cwd string) (string, error) {
 	}
 
 	return absCWD, nil
+}
+
+func SQLiteDSNParentDirToPrepare(dsn string) (string, bool) {
+	if dsn == "" || dsn == ":memory:" {
+		return "", false
+	}
+
+	if strings.HasPrefix(dsn, "file:") {
+		return sqliteFileDSNParentDirToPrepare(dsn)
+	}
+
+	if dsnLooksLikeURIWithScheme(dsn) {
+		return "", false
+	}
+
+	return filepath.Dir(dsn), true
+}
+
+func sqliteFileDSNParentDirToPrepare(dsn string) (string, bool) {
+	u, err := url.Parse(dsn)
+	if err != nil || u.Scheme != "file" {
+		return "", false
+	}
+
+	if strings.EqualFold(u.Query().Get("mode"), "memory") {
+		return "", false
+	}
+
+	dbPath := u.Path
+	if dbPath == "" {
+		dbPath = u.Opaque
+	}
+	if dbPath == "" || dbPath == ":memory:" {
+		return "", false
+	}
+
+	return filepath.Dir(dbPath), true
+}
+
+func dsnLooksLikeURIWithScheme(dsn string) bool {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return false
+	}
+	return u.Scheme != ""
 }
 
 func findNearestGoModAncestor(start string) (string, bool, error) {

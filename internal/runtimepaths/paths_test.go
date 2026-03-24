@@ -116,3 +116,69 @@ func TestResolveRuntimeRoot_FallbackToCwdWhenGoModAbsent(t *testing.T) {
 		t.Fatalf("expected cwd fallback %q, got %q", want, got)
 	}
 }
+
+func TestSQLiteDSNParentDirToPrepare_Matrix(t *testing.T) {
+	absDB := filepath.Join(string(filepath.Separator), "tmp", "agentic-core", "state.db")
+
+	tests := []struct {
+		name      string
+		dsn       string
+		wantDir   string
+		wantMkdir bool
+	}{
+		{
+			name:      "memory literal has no mkdir",
+			dsn:       ":memory:",
+			wantDir:   "",
+			wantMkdir: false,
+		},
+		{
+			name:      "file dsn with mode memory has no mkdir",
+			dsn:       "file:agentic?mode=memory&cache=shared",
+			wantDir:   "",
+			wantMkdir: false,
+		},
+		{
+			name:      "file absolute path dsn prepares parent",
+			dsn:       "file:/tmp/agentic-core/state.db",
+			wantDir:   filepath.Dir(absDB),
+			wantMkdir: true,
+		},
+		{
+			name:      "plain absolute path prepares parent",
+			dsn:       absDB,
+			wantDir:   filepath.Dir(absDB),
+			wantMkdir: true,
+		},
+		{
+			name:      "plain relative path prepares parent",
+			dsn:       filepath.Join("var", "state", "agent.db"),
+			wantDir:   filepath.Join("var", "state"),
+			wantMkdir: true,
+		},
+		{
+			name:      "unparseable file dsn has no mkdir",
+			dsn:       "file://%zz",
+			wantDir:   "",
+			wantMkdir: false,
+		},
+		{
+			name:      "non filesystem scheme has no mkdir",
+			dsn:       "postgres://localhost/agentic",
+			wantDir:   "",
+			wantMkdir: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotDir, gotMkdir := SQLiteDSNParentDirToPrepare(tt.dsn)
+			if gotMkdir != tt.wantMkdir {
+				t.Fatalf("expected mkdir=%v, got %v", tt.wantMkdir, gotMkdir)
+			}
+			if gotDir != tt.wantDir {
+				t.Fatalf("expected dir %q, got %q", tt.wantDir, gotDir)
+			}
+		})
+	}
+}
