@@ -52,7 +52,7 @@ func SQLiteDSNParentDirToPrepare(dsn string) (string, bool) {
 		return "", false
 	}
 
-	if strings.HasPrefix(dsn, "file:") {
+	if strings.HasPrefix(strings.ToLower(dsn), "file:") {
 		return sqliteFileDSNParentDirToPrepare(dsn)
 	}
 
@@ -65,7 +65,7 @@ func SQLiteDSNParentDirToPrepare(dsn string) (string, bool) {
 
 func sqliteFileDSNParentDirToPrepare(dsn string) (string, bool) {
 	u, err := url.Parse(dsn)
-	if err != nil || u.Scheme != "file" {
+	if err != nil || !strings.EqualFold(u.Scheme, "file") {
 		return "", false
 	}
 
@@ -85,8 +85,15 @@ func sqliteFileDSNParentDirToPrepare(dsn string) (string, bool) {
 }
 
 func dsnLooksLikeURIWithScheme(dsn string) bool {
+	if len(dsn) >= 3 && ((dsn[0] >= 'A' && dsn[0] <= 'Z') || (dsn[0] >= 'a' && dsn[0] <= 'z')) && dsn[1] == ':' && (dsn[2] == '\\' || dsn[2] == '/') {
+		return false
+	}
+
 	u, err := url.Parse(dsn)
 	if err != nil {
+		return false
+	}
+	if len(u.Scheme) == 1 && (strings.HasPrefix(u.Path, `\`) || strings.HasPrefix(u.Opaque, `\`)) {
 		return false
 	}
 	return u.Scheme != ""

@@ -163,6 +163,18 @@ func TestSQLiteDSNParentDirToPrepare_Matrix(t *testing.T) {
 			wantMkdir: false,
 		},
 		{
+			name:      "file scheme is case-insensitive",
+			dsn:       "FILE:/tmp/agentic-core/state.db",
+			wantDir:   filepath.Dir(absDB),
+			wantMkdir: true,
+		},
+		{
+			name:      "windows absolute path is treated as filesystem path",
+			dsn:       `C:\tmp\agentic-core\state.db`,
+			wantDir:   filepath.Dir(`C:\tmp\agentic-core\state.db`),
+			wantMkdir: true,
+		},
+		{
 			name:      "non filesystem scheme has no mkdir",
 			dsn:       "postgres://localhost/agentic",
 			wantDir:   "",
