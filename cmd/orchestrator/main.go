@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"agentic-core/internal/logging"
 	"agentic-core/internal/memory"
 	"agentic-core/internal/process"
+	"agentic-core/internal/runtimepaths"
 	"agentic-core/internal/skill"
 	"agentic-core/internal/workflow"
 
@@ -70,7 +72,7 @@ var newApp = NewApp
 func ParseAppConfig(args []string) (AppConfig, error) {
 	fs := flag.NewFlagSet("orchestrator", flag.ContinueOnError)
 	cfg := AppConfig{}
-	fs.StringVar(&cfg.SQLiteDSN, "sqlite-dsn", "agentic_core.db", "sqlite dsn")
+	fs.StringVar(&cfg.SQLiteDSN, "sqlite-dsn", filepath.Join("var", "db", "agentic_core.db"), "sqlite dsn")
 	fs.StringVar(&cfg.RedisAddr, "redis-addr", "localhost:16379", "redis address (set to 'skip' for tests)")
 	fs.StringVar(&cfg.MQTTBroker, "mqtt-broker", "tcp://localhost:11883", "mqtt broker address (set to 'skip' for tests)")
 	fs.StringVar(&cfg.SubagentBinary, "subagent-binary", "./subagent", "path to subagent binary")
@@ -85,11 +87,54 @@ func ParseAppConfig(args []string) (AppConfig, error) {
 	return cfg, nil
 }
 
+func resolveSQLiteDSNForOpen(dsn string, cwd string) (string, error) {
+	if dsn == "" || dsn == ":memory:" {
+		return dsn, nil
+	}
+	if strings.HasPrefix(strings.ToLower(dsn), "file:") {
+		return dsn, nil
+	}
+	if filepath.IsAbs(dsn) {
+		return dsn, nil
+	}
+	if dsn != filepath.Join("var", "db", "agentic_core.db") {
+		return dsn, nil
+	}
+
+	runtimeRoot, err := runtimepaths.ResolveRuntimeRoot("", cwd)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(runtimeRoot, dsn), nil
+}
+
+func prepareSQLiteDSNDir(dsn string) error {
+	parentDir, needsMkdir := runtimepaths.SQLiteDSNParentDirToPrepare(dsn)
+	if !needsMkdir {
+		return nil
+	}
+	if parentDir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		return fmt.Errorf("create sqlite parent dir %q: %w", parentDir, err)
+	}
+	return nil
+}
+
 func NewApp(ctx context.Context, cfg AppConfig) (*App, error) {
-	db, err := sql.Open("sqlite", cfg.SQLiteDSN)
+	sqliteDSN, err := resolveSQLiteDSNForOpen(cfg.SQLiteDSN, ".")
 	if err != nil {
 		return nil, err
 	}
+	if err := prepareSQLiteDSNDir(sqliteDSN); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", sqliteDSN)
+	if err != nil {
+		return nil, err
+	}
+	cfg.SQLiteDSN = sqliteDSN
 
 	store := memory.NewSQLiteTaskStateStore(db)
 	if err := store.InitSchema(ctx); err != nil {

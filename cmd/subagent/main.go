@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"agentic-core/internal/bus"
@@ -15,6 +17,7 @@ import (
 	"agentic-core/internal/logging"
 	"agentic-core/internal/memory"
 	"agentic-core/internal/process"
+	"agentic-core/internal/runtimepaths"
 	"agentic-core/internal/session"
 	"agentic-core/internal/skill"
 
@@ -60,7 +63,7 @@ func ParseConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.TaskID, "task-id", "", "task id")
 	fs.StringVar(&cfg.RedisAddr, "redis-addr", "localhost:16379", "redis address")
 	fs.StringVar(&cfg.MQTTBroker, "mqtt-broker", "tcp://localhost:11883", "mqtt broker address")
-	fs.StringVar(&cfg.SQLiteDSN, "sqlite-dsn", "agentic_core.db", "sqlite dsn")
+	fs.StringVar(&cfg.SQLiteDSN, "sqlite-dsn", filepath.Join("var", "db", "agentic_core.db"), "sqlite dsn")
 
 	// LLM Flags
 	fs.StringVar(&cfg.LLMProvider, "llm-provider", "openai", "llm provider (openai, etc)")
@@ -77,17 +80,65 @@ func ParseConfig(args []string) (Config, error) {
 	return cfg, nil
 }
 
+func resolveSQLiteDSNForOpen(dsn string, cwd string) (string, error) {
+	if dsn == "" || dsn == ":memory:" {
+		return dsn, nil
+	}
+	if strings.HasPrefix(strings.ToLower(dsn), "file:") {
+		return dsn, nil
+	}
+	if filepath.IsAbs(dsn) {
+		return dsn, nil
+	}
+	if dsn != filepath.Join("var", "db", "agentic_core.db") {
+		return dsn, nil
+	}
+
+	runtimeRoot, err := runtimepaths.ResolveRuntimeRoot("", cwd)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(runtimeRoot, dsn), nil
+}
+
+func prepareSQLiteDSNDir(dsn string) error {
+	parentDir, needsMkdir := runtimepaths.SQLiteDSNParentDirToPrepare(dsn)
+	if !needsMkdir {
+		return nil
+	}
+	if parentDir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		return fmt.Errorf("create sqlite parent dir %q: %w", parentDir, err)
+	}
+	return nil
+}
+
 func NewSubagent(ctx context.Context, cfg Config) (*Subagent, error) {
 	s := &Subagent{cfg: cfg}
 
 	// 初始化 SQLite 会话存储
 	if cfg.SQLiteDSN != "skip" {
-		db, err := sql.Open("sqlite", cfg.SQLiteDSN)
-		if err == nil {
-			historyStore := session.NewSQLiteHistoryStore(db)
-			_ = historyStore.InitSchema(ctx)
-			s.history = historyStore
+		sqliteDSN, err := resolveSQLiteDSNForOpen(cfg.SQLiteDSN, ".")
+		if err != nil {
+			return nil, err
 		}
+		if err := prepareSQLiteDSNDir(sqliteDSN); err != nil {
+			return nil, err
+		}
+		db, err := sql.Open("sqlite", sqliteDSN)
+		if err != nil {
+			return nil, fmt.Errorf("open sqlite history store: %w", err)
+		}
+		historyStore := session.NewSQLiteHistoryStore(db)
+		if err := historyStore.InitSchema(ctx); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("init sqlite history schema: %w", err)
+		}
+		s.history = historyStore
+		cfg.SQLiteDSN = sqliteDSN
+		s.cfg.SQLiteDSN = sqliteDSN
 	}
 
 	// 初始化 LLM Resolver
