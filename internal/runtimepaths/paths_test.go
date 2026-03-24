@@ -25,6 +25,34 @@ func TestResolveRuntimeRoot_OverrideWins(t *testing.T) {
 	}
 }
 
+func TestResolveRuntimeRoot_OverrideRelativePathNormalizedToAbsolute(t *testing.T) {
+	tmp := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	got, err := ResolveRuntimeRoot("runtime", tmp)
+	if err != nil {
+		t.Fatalf("ResolveRuntimeRoot returned error: %v", err)
+	}
+
+	want, err := filepath.Abs("runtime")
+	if err != nil {
+		t.Fatalf("filepath.Abs returned error: %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected absolute normalized override %q, got %q", want, got)
+	}
+}
+
 func TestResolveRuntimeRoot_NearestAncestorGoMod(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -49,6 +77,21 @@ func TestResolveRuntimeRoot_NearestAncestorGoMod(t *testing.T) {
 
 	if got != want {
 		t.Fatalf("expected repo root %q, got %q", want, got)
+	}
+}
+
+func TestResolveRuntimeRoot_EmptyCwdReturnsError(t *testing.T) {
+	_, err := ResolveRuntimeRoot("", "")
+	if err == nil {
+		t.Fatal("expected error when cwd is empty")
+	}
+}
+
+func TestResolveRuntimeRoot_NonExistentCwdReturnsError(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing-dir")
+	_, err := ResolveRuntimeRoot("", missing)
+	if err == nil {
+		t.Fatal("expected error for non-existent cwd")
 	}
 }
 

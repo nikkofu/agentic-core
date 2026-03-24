@@ -2,13 +2,18 @@ package runtimepaths
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
 
 func ResolveRuntimeRoot(override string, cwd string) (string, error) {
 	if override != "" {
-		return filepath.Abs(override)
+		absOverride, err := filepath.Abs(override)
+		if err != nil {
+			return "", fmt.Errorf("resolve runtime root from override: %w", err)
+		}
+		return absOverride, nil
 	}
 
 	if cwd == "" {
@@ -17,11 +22,22 @@ func ResolveRuntimeRoot(override string, cwd string) (string, error) {
 
 	absCWD, err := filepath.Abs(cwd)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve runtime root from cwd: %w", err)
+	}
+
+	info, err := os.Stat(absCWD)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("cwd does not exist: %s", absCWD)
+		}
+		return "", fmt.Errorf("stat cwd %s: %w", absCWD, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("cwd is not a directory: %s", absCWD)
 	}
 
 	if root, ok, err := findNearestGoModAncestor(absCWD); err != nil {
-		return "", err
+		return "", fmt.Errorf("find nearest go.mod ancestor from %s: %w", absCWD, err)
 	} else if ok {
 		return root, nil
 	}
