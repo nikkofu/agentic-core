@@ -128,13 +128,17 @@ func NewSubagent(ctx context.Context, cfg Config) (*Subagent, error) {
 			return nil, err
 		}
 		db, err := sql.Open("sqlite", sqliteDSN)
-		if err == nil {
-			historyStore := session.NewSQLiteHistoryStore(db)
-			_ = historyStore.InitSchema(ctx)
-			s.history = historyStore
-			cfg.SQLiteDSN = sqliteDSN
-			s.cfg.SQLiteDSN = sqliteDSN
+		if err != nil {
+			return nil, fmt.Errorf("open sqlite history store: %w", err)
 		}
+		historyStore := session.NewSQLiteHistoryStore(db)
+		if err := historyStore.InitSchema(ctx); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("init sqlite history schema: %w", err)
+		}
+		s.history = historyStore
+		cfg.SQLiteDSN = sqliteDSN
+		s.cfg.SQLiteDSN = sqliteDSN
 	}
 
 	// 初始化 LLM Resolver

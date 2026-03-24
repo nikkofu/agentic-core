@@ -142,6 +142,21 @@ func TestPrepareSQLiteDSNDir_NoOpForMemoryDSN(t *testing.T) {
 	}
 }
 
+func TestNewSubagentReturnsErrorWhenSQLiteSchemaInitFails(t *testing.T) {
+	cfg := Config{
+		AgentType:  "planner",
+		TaskID:     "task-1",
+		RedisAddr:  "skip",
+		MQTTBroker: "skip",
+		SQLiteDSN:  "file:history-schema-readonly?mode=memory&cache=shared&_pragma=query_only(1)",
+	}
+
+	_, err := NewSubagent(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected sqlite schema init error, got nil")
+	}
+}
+
 func TestNewSubagentInitializesBuses(t *testing.T) {
 	cfg := Config{AgentType: "planner", TaskID: "task-1", RedisAddr: "skip", MQTTBroker: "skip"}
 	agent, err := NewSubagent(context.Background(), cfg)
