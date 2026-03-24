@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -58,6 +59,86 @@ func TestParseConfigParsesAgentTypeAndTaskID(t *testing.T) {
 func TestParseConfigRejectsMissingRequiredFlags(t *testing.T) {
 	if _, err := ParseConfig([]string{"--agent-type", "planner"}); err == nil {
 		t.Fatal("expected parse error when task-id is missing")
+	}
+}
+
+func TestParseConfigDefaultsSQLiteDSN(t *testing.T) {
+	cfg, err := ParseConfig([]string{"--agent-type", "planner", "--task-id", "task-1"})
+	if err != nil {
+		t.Fatalf("parse config failed: %v", err)
+	}
+	if cfg.SQLiteDSN != filepath.Join("var", "db", "agentic_core.db") {
+		t.Fatalf("expected default sqlite dsn, got %s", cfg.SQLiteDSN)
+	}
+}
+
+func TestResolveSQLiteDSNForOpen_DefaultUsesRuntimeRoot(t *testing.T) {
+	tmp := t.TempDir()
+	dsn, err := resolveSQLiteDSNForOpen(filepath.Join("var", "db", "agentic_core.db"), tmp)
+	if err != nil {
+		t.Fatalf("resolveSQLiteDSNForOpen returned error: %v", err)
+	}
+
+	want := filepath.Join(tmp, "var", "db", "agentic_core.db")
+	if dsn != want {
+		t.Fatalf("expected runtime-root resolved dsn %q, got %q", want, dsn)
+	}
+}
+
+func TestResolveSQLiteDSNForOpen_ExplicitRelativeStaysCwdBased(t *testing.T) {
+	tmp := t.TempDir()
+	cwd := filepath.Join(tmp, "cwd")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll returned error: %v", err)
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd returned error: %v", err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("os.Chdir returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	dsn, err := resolveSQLiteDSNForOpen(filepath.Join("relative", "custom.db"), tmp)
+	if err != nil {
+		t.Fatalf("resolveSQLiteDSNForOpen returned error: %v", err)
+	}
+
+	want := filepath.Join("relative", "custom.db")
+	if dsn != want {
+		t.Fatalf("expected cwd-compatible relative dsn %q, got %q", want, dsn)
+	}
+}
+
+func TestPrepareSQLiteDSNDir_CreatesParentForFilePath(t *testing.T) {
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "var", "db", "agentic_core.db")
+	parent := filepath.Dir(dsn)
+
+	if _, err := os.Stat(parent); !os.IsNotExist(err) {
+		t.Fatalf("expected parent directory absent before prepare, stat err=%v", err)
+	}
+
+	if err := prepareSQLiteDSNDir(dsn); err != nil {
+		t.Fatalf("prepareSQLiteDSNDir returned error: %v", err)
+	}
+
+	info, err := os.Stat(parent)
+	if err != nil {
+		t.Fatalf("expected parent directory created, stat err=%v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("expected parent path to be directory, got mode=%v", info.Mode())
+	}
+}
+
+func TestPrepareSQLiteDSNDir_NoOpForMemoryDSN(t *testing.T) {
+	if err := prepareSQLiteDSNDir(":memory:"); err != nil {
+		t.Fatalf("expected no error for memory dsn, got %v", err)
 	}
 }
 
