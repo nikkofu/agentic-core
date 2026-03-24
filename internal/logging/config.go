@@ -57,12 +57,12 @@ func DefaultConfig(service string) Config {
 func resolveDefaultLogDir(defaultDir string) string {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return defaultDir
+		return filepath.Clean(filepath.Join(string(filepath.Separator), filepath.FromSlash(defaultDir)))
 	}
 
 	runtimeRoot, err := runtimepaths.ResolveRuntimeRoot("", cwd)
 	if err != nil {
-		return defaultDir
+		return filepath.Clean(filepath.Join(string(filepath.Separator), filepath.FromSlash(defaultDir)))
 	}
 
 	return filepath.Join(runtimeRoot, filepath.FromSlash(defaultDir))
